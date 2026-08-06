@@ -1,0 +1,8 @@
+
+{
+  "name": "INTEGRATED LABORATORY EQUIPMENT MANAGEMENT SYSTEM (I-LEMS)",
+  "description": "Integrated equipment and apparatus management system for the Leon National High School Science Laboratory.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
