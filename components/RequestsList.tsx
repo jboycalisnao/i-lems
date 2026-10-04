@@ -7,7 +7,11 @@ import { Search, CheckCircle, XCircle, Trash2, Printer, Eye, Loader2, X, Calenda
 import ConfirmModal from './ConfirmModal';
 import BorrowerAgreementModal from './BorrowerAgreementModal';
 
-const RequestsList: React.FC = () => {
+interface RequestsListProps {
+  onRefresh?: () => void;
+}
+
+const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
   const [requests, setRequests] = useState<BorrowRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -80,6 +84,7 @@ const RequestsList: React.FC = () => {
               // Notify student
               await notifications.notifyBorrowerOfStatusChange(currentSettings, req, 'Approved');
               await loadRequests();
+              onRefresh?.();
           } else {
               alert(result.message || "Approval failed.");
           }
@@ -98,6 +103,7 @@ const RequestsList: React.FC = () => {
           // Notify student
           await notifications.notifyBorrowerOfStatusChange(currentSettings, req, 'Released');
           await loadRequests();
+          onRefresh?.();
       } catch (err) {
           console.error(err);
       } finally {
@@ -113,6 +119,7 @@ const RequestsList: React.FC = () => {
           // Notify student
           await notifications.notifyBorrowerOfStatusChange(currentSettings, req, 'Rejected');
           await loadRequests();
+          onRefresh?.();
       } catch (err) {
           console.error(err);
       } finally {
@@ -130,6 +137,7 @@ const RequestsList: React.FC = () => {
               setProcessingId(id);
               await storage.deleteBorrowRequest(id);
               await loadRequests();
+              onRefresh?.();
               setProcessingId(null);
               setConfirmModal(prev => ({ ...prev, isOpen: false }));
           }

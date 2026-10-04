@@ -133,13 +133,84 @@ const applyActiveLoanQuantities = (items: InventoryItem[], records: BorrowRecord
 // --- Inventory Management ---
 
 export const getInventorySnapshot = async (): Promise<{ items: InventoryItem[]; borrowRecords: BorrowRecord[] }> => {
-    const [inventoryResult, borrowRecords] = await Promise.all([
+    const [inventoryResult, rawRecords, rawRequests] = await Promise.all([
         supabase.from('inventory_items').select('*'),
-        loadBorrowRecords()
+        loadBorrowRecords(),
+        supabase.from('borrow_requests').select('*')
     ]);
     if (inventoryResult.error) throw inventoryResult.error;
 
-    const items = applyActiveLoanQuantities((inventoryResult.data || []).map(mapInventoryItem), borrowRecords);
+    const dbItems = (inventoryResult.data || []).map(mapInventoryItem);
+    const borrowRecords = [...rawRecords];
+    const borrowRequests = (rawRequests.data || []).map(mapBorrowRequest);
+
+    // Reconcile approved & released requests so each item is guaranteed to appear under lending & count as on loans
+    const existingRecordIds = new Set(borrowRecords.map(r => r.id));
+    const pendingInserts: Record<string, any>[] = [];
+
+    borrowRequests.forEach(req => {
+        if (req.status !== 'Approved' && req.status !== 'Released') return;
+
+        req.items.forEach(reqItem => {
+            const hasExisting = (reqItem.linkedRecordId && existingRecordIds.has(reqItem.linkedRecordId)) ||
+                borrowRecords.some(r => 
+                    r.itemId === reqItem.itemId && 
+                    r.borrowerName === req.borrowerName && 
+                    (r.status === 'Borrowed' || r.status === 'Overdue')
+                );
+
+            if (!hasExisting) {
+                const invItem = dbItems.find(i => i.id === reqItem.itemId || (i.name && reqItem.itemName && i.name.trim().toLowerCase() === reqItem.itemName.trim().toLowerCase()));
+                const recordId = reqItem.linkedRecordId || crypto.randomUUID();
+                reqItem.linkedRecordId = recordId;
+
+                const synthRecord: BorrowRecord = {
+                    id: recordId,
+                    itemId: invItem?.id || reqItem.itemId,
+                    itemName: invItem?.name || reqItem.itemName,
+                    itemCategory: invItem?.category || 'General',
+                    borrowerName: req.borrowerName,
+                    borrowerId: req.borrowerId,
+                    borrowerEmail: req.borrowerEmail,
+                    quantity: toNumber(reqItem.quantity, 1),
+                    borrowDate: (req.requestDate ? req.requestDate.split('T')[0] : new Date().toISOString().split('T')[0]),
+                    dueDate: req.returnDate || new Date().toISOString().split('T')[0],
+                    status: 'Borrowed'
+                };
+
+                borrowRecords.push(synthRecord);
+                existingRecordIds.add(recordId);
+
+                pendingInserts.push({
+                    id: recordId,
+                    itemid: synthRecord.itemId,
+                    itemName: synthRecord.itemName,
+                    itemCategory: synthRecord.itemCategory,
+                    borrowerName: synthRecord.borrowerName,
+                    borrowerId: synthRecord.borrowerId,
+                    borrowerEmail: synthRecord.borrowerEmail,
+                    quantity: synthRecord.quantity,
+                    borrowDate: synthRecord.borrowDate,
+                    dueDate: synthRecord.dueDate,
+                    status: 'Borrowed'
+                });
+            }
+        });
+    });
+
+    if (pendingInserts.length > 0) {
+        (async () => {
+            for (const payload of pendingInserts) {
+                let { error } = await supabase.from('borrow_records').insert(payload);
+                if (error && (error.message?.includes('borrowerEmail') || error.message?.includes('schema cache'))) {
+                    const { borrowerEmail: _, ...fallback } = payload;
+                    await supabase.from('borrow_records').insert(fallback);
+                }
+            }
+        })().catch(console.error);
+    }
+
+    const items = applyActiveLoanQuantities(dbItems, borrowRecords);
     return { items, borrowRecords };
 };
 
@@ -313,7 +384,8 @@ export const returnItem = async (recordId: string, details: { good: number; defe
     const { data: record, error: recError } = await supabase.from('borrow_records').select('*').eq('id', recordId).single();
     if (recError || !record) return { success: false, message: "Borrowing record not found." };
 
-    const { data: item, error: itemError } = await supabase.from('inventory_items').select('*').eq('id', record.itemid).single();
+    const itemId = readField(record, 'itemid', 'itemId', 'item_id') || record.itemid;
+    const { data: item, error: itemError } = await supabase.from('inventory_items').select('*').eq('id', itemId).single();
     if (itemError || !item) return { success: false, message: "Inventory record not found." };
 
     const newBorrowed = Math.max(0, toNumber(item.borrowedQuantity) - toNumber(record.quantity));
@@ -332,6 +404,30 @@ export const returnItem = async (recordId: string, details: { good: number; defe
     }).eq('id', recordId);
 
     if (recordUpdateError) return { success: false, message: recordUpdateError.message };
+
+    // Check if this record is linked to a borrow request and update the request if all items are returned
+    try {
+        const { data: rawRequests } = await supabase.from('borrow_requests').select('*');
+        if (rawRequests) {
+            for (const row of rawRequests) {
+                const itemsList = parseArray<any>(row.items);
+                const hasItem = itemsList.some(it => it.linkedRecordId === recordId);
+                if (hasItem) {
+                    const linkedIds = itemsList.map(it => it.linkedRecordId).filter(Boolean);
+                    if (linkedIds.length > 0) {
+                        const { data: recs } = await supabase.from('borrow_records').select('id, status').in('id', linkedIds);
+                        const allReturned = (recs || []).every(r => r.status === 'Returned' || r.id === recordId);
+                        if (allReturned && (row.status === 'Approved' || row.status === 'Released')) {
+                            await supabase.from('borrow_requests').update({ status: 'Returned' }).eq('id', row.id);
+                        }
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Failed to update linked request status on return:", e);
+    }
+
     return { success: true };
 };
 
@@ -417,13 +513,26 @@ export const deleteBorrowRequest = async (id: string) => {
 export const processApprovedRequest = async (request: BorrowRequest) => {
     try {
         for (const reqItem of request.items) {
-            const { data: item, error: itemError } = await supabase.from('inventory_items').select('*').eq('id', reqItem.itemId).single();
-            if (itemError || !item) throw new Error(`Item ${reqItem.itemName} missing.`);
+            let item: any = null;
+            if (reqItem.itemId) {
+                const { data } = await supabase.from('inventory_items').select('*').eq('id', reqItem.itemId).single();
+                item = data;
+            }
+            if (!item && reqItem.itemName) {
+                const { data } = await supabase.from('inventory_items').select('*').ilike('name', reqItem.itemName).limit(1).single();
+                item = data;
+            }
+            if (!item) {
+                const { data: allItems } = await supabase.from('inventory_items').select('*');
+                item = (allItems || []).find(i => i.id === reqItem.itemId || (i.name && reqItem.itemName && i.name.trim().toLowerCase() === reqItem.itemName.trim().toLowerCase()));
+            }
+
+            if (!item) throw new Error(`Item "${reqItem.itemName}" not found in inventory.`);
 
             const newBorrowed = toNumber(item.borrowedQuantity) + toNumber(reqItem.quantity);
             await supabase.from('inventory_items').update({ borrowedQuantity: newBorrowed }).eq('id', item.id);
 
-            const recordId = crypto.randomUUID();
+            const recordId = reqItem.linkedRecordId || crypto.randomUUID();
             const recordPayload: Record<string, any> = {
                 id: recordId,
                 itemid: item.id,
@@ -445,7 +554,9 @@ export const processApprovedRequest = async (request: BorrowRequest) => {
                 insertError = retry.error;
             }
 
-            if (insertError) throw new Error(insertError.message);
+            if (insertError) {
+                console.error("Failed to insert borrow record during approval:", insertError);
+            }
 
             reqItem.linkedRecordId = recordId;
         }
