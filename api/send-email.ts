@@ -1,5 +1,3 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
-
 export const SYSTEM_SHORT_NAME = 'I-LEMS';
 
 export interface SmtpEmailPayload {
@@ -126,73 +124,103 @@ export const sendSmtpEmail = async (payload: SmtpEmailPayload, env: Environment)
   });
 };
 
-interface ApiRequest extends IncomingMessage {
-  body?: unknown;
-}
+const parseRequestBody = async (request: any): Promise<Record<string, unknown>> => {
+  if (!request) return {};
 
-const readBody = async (request: ApiRequest) => {
+  if (typeof request.json === 'function') {
+    try {
+      const data = await request.json();
+      if (data && typeof data === 'object') return data;
+    } catch {}
+  }
+
   if (request.body) {
     if (typeof request.body === 'string') {
       try {
-        return JSON.parse(request.body) as Record<string, unknown>;
+        return JSON.parse(request.body);
       } catch {
         return {};
       }
     }
     if (typeof request.body === 'object') {
-      return request.body as Record<string, unknown>;
+      return request.body;
     }
   }
 
-  let raw = '';
-  for await (const chunk of request) {
-    raw += chunk;
-    if (raw.length > 300_000) throw new Error('Request body is too large.');
+  try {
+    let raw = '';
+    for await (const chunk of request) {
+      raw += chunk;
+      if (raw.length > 300_000) throw new Error('Request body too large.');
+    }
+    return JSON.parse(raw || '{}');
+  } catch {
+    return {};
   }
-  return JSON.parse(raw || '{}') as Record<string, unknown>;
 };
 
-const sendJson = (response: ServerResponse, status: number, data: object) => {
-  try {
-    const res = response as any;
-    if (typeof res.status === 'function' && typeof res.json === 'function') {
-      res.setHeader?.('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      res.status(status).json(data);
-      return;
-    }
-  } catch {}
+const sendUniversalResponse = (response: any, status: number, data: object): Response | void => {
+  if (response && typeof response.setHeader === 'function') {
+    try {
+      if (typeof response.status === 'function' && typeof response.json === 'function') {
+        response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        response.status(status).json(data);
+        return;
+      }
+    } catch {}
 
-  response.statusCode = status;
-  response.setHeader('Content-Type', 'application/json');
-  response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  response.end(JSON.stringify(data));
+    response.statusCode = status;
+    response.setHeader('Content-Type', 'application/json');
+    response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    response.end(JSON.stringify(data));
+    return;
+  }
+
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate'
+    }
+  });
 };
 
-export default async function handler(request: ApiRequest, response: ServerResponse) {
+export async function GET(request: any, response?: any) {
   try {
-    if (request.method === 'GET') {
-      const config = getPublicSmtpConfig(process.env);
-      sendJson(response, 200, config);
-      return;
-    }
+    const config = getPublicSmtpConfig(process.env);
+    return sendUniversalResponse(response, 200, config);
+  } catch (error) {
+    console.error('SMTP GET failed:', error);
+    return sendUniversalResponse(response, 500, {
+      error: error instanceof Error ? error.message : 'Failed to retrieve SMTP configuration'
+    });
+  }
+}
 
-    if (request.method !== 'POST') {
-      response.setHeader('Allow', 'GET, POST');
-      sendJson(response, 405, { error: 'Method not allowed.' });
-      return;
-    }
-
-    const body = await readBody(request);
+export async function POST(request: any, response?: any) {
+  try {
+    const body = await parseRequestBody(request);
     if (body.action === 'verify') {
       await verifySmtpConnection(process.env);
     } else {
       await sendSmtpEmail(body as unknown as SmtpEmailPayload, process.env);
     }
-    sendJson(response, 200, { success: true });
+    return sendUniversalResponse(response, 200, { success: true });
   } catch (error) {
-    console.error('SMTP request failed:', error);
-    sendJson(response, 500, {
-      error: error instanceof Error ? error.message : 'SMTP request failed.'
+    console.error('SMTP POST failed:', error);
+    return sendUniversalResponse(response, 500, {
+      error: error instanceof Error ? error.message : 'SMTP operation failed'
     });
   }
+}
+
+export default async function handler(request: any, response?: any) {
+  const method = (request?.method || 'GET').toUpperCase();
+  if (method === 'GET') {
+    return GET(request, response);
+  }
+  if (method === 'POST') {
+    return POST(request, response);
+  }
+  return sendUniversalResponse(response, 405, { error: 'Method not allowed' });
 }
