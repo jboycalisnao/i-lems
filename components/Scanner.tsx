@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { InventoryItem, BorrowRecord, InventoryBox } from '../types';
-import { Scan, Search, Camera, X, Box, MapPin, Activity, HandPlatter, RotateCcw, AlertTriangle, Tag, CheckCircle, ClipboardList, FileText, Printer, ChevronRight, PackageOpen } from 'lucide-react';
+import { Scan, Search, Camera, X, Box, MapPin, Activity, HandPlatter, RotateCcw, AlertTriangle, Tag, CheckCircle, ClipboardList, FileText, Printer, ChevronRight, PackageOpen, User } from 'lucide-react';
 import { getCategoryIcon, getCategoryColor } from '../constants';
 import { getBarcodeBaseId, getUnitBarcode } from '../utils/barcode';
 
@@ -219,31 +219,88 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
 
   const auditItem = useMemo(() => items.find(i => i.id === auditSelectedItemId), [items, auditSelectedItemId]);
 
-  // Generate Expected IDs
+  const activeLoansForAuditItem = useMemo(() => {
+      if (!auditItem) return [];
+      return borrowRecords.filter(
+          r => r.itemId === auditItem.id && (r.status === 'Borrowed' || r.status === 'Overdue')
+      );
+  }, [auditItem, borrowRecords]);
+
+  // Generate Expected IDs & Account for All Loans (Specific Units and General Quantity Loans)
   const auditGrid = useMemo(() => {
       if (!auditItem) return [];
-      
-      const grid = [];
+
+      // Collect specific unit barcodes on loan, and count unassigned quantity loans
+      const specificBorrowedMap = new Map<string, BorrowRecord>();
+      let unassignedBorrowedCount = 0;
+
+      activeLoansForAuditItem.forEach(r => {
+          if (r.specificId && r.specificId.trim()) {
+              specificBorrowedMap.set(r.specificId.trim().toUpperCase(), r);
+          } else {
+              unassignedBorrowedCount += (r.quantity || 1);
+          }
+      });
+
+      const grid: Array<{
+          uniqueId: string;
+          status: 'missing' | 'present' | 'borrowed';
+          seq: string;
+          borrowerName?: string;
+          dueDate?: string;
+          specificIdMatched?: boolean;
+      }> = [];
+
+      // Pass 1: Mark scanned units as present, and specific-unit loans as borrowed
       for (let i = 1; i <= auditItem.quantity; i++) {
           const seq = String(i).padStart(3, '0');
           const uniqueId = getUnitBarcode(auditItem, i);
+          const upperUniqueId = uniqueId.toUpperCase();
           
-          // Check Status
           let status: 'missing' | 'present' | 'borrowed' = 'missing';
-          
-          // Is it borrowed?
-          const isBorrowed = borrowRecords.some(r => r.specificId === uniqueId && (r.status === 'Borrowed' || r.status === 'Overdue'));
-          
-          if (auditScannedIds.has(uniqueId)) {
+          let borrowerName: string | undefined = undefined;
+          let dueDate: string | undefined = undefined;
+          let specificIdMatched = false;
+
+          if (auditScannedIds.has(upperUniqueId) || auditScannedIds.has(uniqueId)) {
               status = 'present';
-          } else if (isBorrowed) {
+          } else if (specificBorrowedMap.has(upperUniqueId)) {
               status = 'borrowed';
+              const rec = specificBorrowedMap.get(upperUniqueId);
+              borrowerName = rec?.borrowerName;
+              dueDate = rec?.dueDate;
+              specificIdMatched = true;
           }
 
-          grid.push({ uniqueId, status, seq });
+          grid.push({ uniqueId, status, seq, borrowerName, dueDate, specificIdMatched });
       }
+
+      // Pass 2: Allocate unassigned (quantity-based manual loans or requests)
+      // to remaining unscanned / missing units so they accurately reflect as On Loan
+      if (unassignedBorrowedCount > 0) {
+          const generalRecords = activeLoansForAuditItem.filter(r => !r.specificId || !r.specificId.trim());
+          let genRecIdx = 0;
+          let recRemaining = generalRecords[genRecIdx]?.quantity || 1;
+
+          for (let i = 0; i < grid.length && unassignedBorrowedCount > 0; i++) {
+              if (grid[i].status === 'missing') {
+                  grid[i].status = 'borrowed';
+                  if (generalRecords[genRecIdx]) {
+                      grid[i].borrowerName = generalRecords[genRecIdx].borrowerName;
+                      grid[i].dueDate = generalRecords[genRecIdx].dueDate;
+                      recRemaining--;
+                      if (recRemaining <= 0) {
+                          genRecIdx++;
+                          recRemaining = generalRecords[genRecIdx]?.quantity || 1;
+                      }
+                  }
+                  unassignedBorrowedCount--;
+              }
+          }
+      }
+
       return grid;
-  }, [auditItem, auditScannedIds, borrowRecords]);
+  }, [auditItem, auditScannedIds, activeLoansForAuditItem]);
 
   const handleAuditScan = (code: string) => {
       const trimmed = code.trim().toUpperCase();
@@ -252,7 +309,7 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
           return;
       }
 
-      if (auditGrid.some(unit => unit.uniqueId === trimmed)) {
+      if (auditGrid.some(unit => unit.uniqueId.toUpperCase() === trimmed)) {
           setAuditScannedIds(prev => {
               const newSet = new Set(prev);
               newSet.add(trimmed);
@@ -310,7 +367,7 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
 
       const meta = document.createElement('p');
       meta.className = 'meta';
-      meta.textContent = `${auditItem.name} (${getBarcodeBaseId(auditItem)}) | ${new Date().toLocaleString()}`;
+      meta.textContent = `${auditItem.name} (${getBarcodeBaseId(auditItem)}) | Total Stock: ${auditItem.quantity} ${auditItem.unit} | ${new Date().toLocaleString()}`;
       document.body.appendChild(meta);
 
       const summary = document.createElement('div');
@@ -331,7 +388,7 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
 
       const table = document.createElement('table');
       const head = table.createTHead().insertRow();
-      ['Sequence', 'Unit ID', 'Status'].forEach(label => {
+      ['Sequence', 'Unit ID', 'Audit Status', 'Borrower / Verification Details'].forEach(label => {
           const th = document.createElement('th');
           th.textContent = label;
           head.appendChild(th);
@@ -339,7 +396,11 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
       const body = table.createTBody();
       auditGrid.forEach(unit => {
           const row = body.insertRow();
-          [unit.seq, unit.uniqueId, unit.status.toUpperCase()].forEach(value => {
+          const displayStatus = unit.status === 'borrowed' ? 'ON LOAN' : unit.status.toUpperCase();
+          const details = unit.status === 'borrowed'
+              ? (unit.borrowerName ? `On Loan to ${unit.borrowerName}${unit.dueDate ? ` (Due: ${unit.dueDate})` : ''}` : 'On Loan to borrower')
+              : (unit.status === 'present' ? 'Verified Present in Lab' : 'Unaccounted / Missing');
+          [unit.seq, unit.uniqueId, displayStatus, details].forEach(value => {
               const cell = row.insertCell();
               cell.textContent = value;
           });
@@ -535,7 +596,7 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
                       <option value="">Select equipment</option>
                       {items.map(item => (
                           <option key={item.id} value={item.id}>
-                              {item.name} ({getBarcodeBaseId(item)}) - {item.quantity} {item.unit}
+                              {item.name} ({getBarcodeBaseId(item)}) — Total: {item.quantity} {item.unit} | On Loan: {item.borrowedQuantity || 0}
                           </option>
                       ))}
                   </select>
@@ -585,6 +646,25 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
                               ))}
                           </div>
 
+                          {activeLoansForAuditItem.length > 0 && (
+                              <div className="p-4 bg-blue-50/80 border-b border-blue-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-blue-900">
+                                  <div className="flex items-center gap-2">
+                                      <span className="px-2 py-0.5 bg-blue-600 text-white rounded font-bold uppercase tracking-wider text-[10px]">Active Loans</span>
+                                      <span className="font-semibold">{auditStats.borrowed} unit(s) accounted on loan</span>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                      {activeLoansForAuditItem.map((rec) => (
+                                          <span key={rec.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-white border border-blue-200 text-blue-800 font-medium shadow-xs">
+                                              <User className="w-3.5 h-3.5 text-blue-600" />
+                                              <strong>{rec.borrowerName}</strong>
+                                              <span>({rec.quantity} unit{rec.quantity > 1 ? 's' : ''}{rec.specificId ? ` · #${rec.specificId}` : ''})</span>
+                                              {rec.dueDate && <span className="text-blue-500 font-mono text-[10px]">Due {rec.dueDate}</span>}
+                                          </span>
+                                      ))}
+                                  </div>
+                              </div>
+                          )}
+
                           <div className="p-6 bg-gray-50/70">
                               {scanMethod === 'manual' ? (
                                   <div className="max-w-xl mx-auto">
@@ -627,7 +707,8 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
                               {auditGrid.map(unit => (
                                   <div
                                       key={unit.uniqueId}
-                                      className={`h-20 p-3 rounded-md border flex flex-col justify-between ${
+                                      title={unit.status === 'borrowed' && unit.borrowerName ? `On Loan to ${unit.borrowerName}${unit.dueDate ? ` (Due: ${unit.dueDate})` : ''}` : unit.uniqueId}
+                                      className={`h-20 p-2.5 rounded-md border flex flex-col justify-between transition-all ${
                                           unit.status === 'present'
                                               ? 'bg-green-50 border-green-200 text-green-800'
                                               : unit.status === 'borrowed'
@@ -637,9 +718,14 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
                                   >
                                       <div className="flex items-center justify-between">
                                           <span className="text-xs font-bold">#{unit.seq}</span>
-                                          {unit.status === 'present' ? <CheckCircle className="w-4 h-4" /> : unit.status === 'borrowed' ? <Box className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+                                          {unit.status === 'present' ? <CheckCircle className="w-4 h-4 text-green-600" /> : unit.status === 'borrowed' ? <Box className="w-4 h-4 text-blue-600" /> : <AlertTriangle className="w-4 h-4 text-red-500" />}
                                       </div>
-                                      <span className="text-[10px] font-mono truncate" title={unit.uniqueId}>{unit.uniqueId}</span>
+                                      <div className="flex items-end justify-between gap-1 min-w-0">
+                                          <span className="text-[10px] font-mono truncate" title={unit.uniqueId}>{unit.uniqueId}</span>
+                                          <span className="text-[9px] font-bold uppercase tracking-wider px-1 py-0.5 rounded bg-white/70 flex-shrink-0">
+                                              {unit.status === 'borrowed' ? 'On Loan' : unit.status}
+                                          </span>
+                                      </div>
                                   </div>
                               ))}
                           </div>

@@ -405,6 +405,9 @@ const App: React.FC = () => {
                     {view === 'inventory' && (
                         <button onClick={() => setIsFormOpen(true)} className="flex items-center space-x-2 bg-blue-600 text-white px-3 md:px-5 py-2.5 rounded-md font-bold shadow-md transition-colors hover:bg-blue-700"><Plus className="w-5 h-5" /><span className="hidden sm:inline">Add Equipment</span><span className="sm:hidden">Add</span></button>
                     )}
+                    {view === 'lending' && (
+                        <button onClick={() => openBorrowModal()} className="flex items-center space-x-2 bg-blue-600 text-white px-3 md:px-5 py-2.5 rounded-md font-bold shadow-md transition-colors hover:bg-blue-700"><HandPlatter className="w-5 h-5" /><span className="hidden sm:inline">New Loan</span><span className="sm:hidden">Loan</span></button>
+                    )}
                 </div>
             </div>
 
@@ -415,7 +418,7 @@ const App: React.FC = () => {
                         <Route path="/inventory/*" element={<InventoryList items={items} categories={categories} onEdit={(item) => { setEditingItem(item); setIsFormOpen(true); }} onDelete={handleDelete} onShowQR={setQrItem} onPrintBarcodes={setBarcodeItem} />} />
                         <Route path="/requests" element={<RequestsList />} />
                         <Route path="/scanner/*" element={<Scanner items={items} borrowRecords={borrowRecords} onBorrow={openBorrowModal} onReturn={initiateReturn} />} />
-                        <Route path="/lending/*" element={<LendingList records={borrowRecords} requests={requests} onReturn={initiateReturn} onReturnBulk={() => {}} onDelete={handleDeleteRecord} onDeleteBulk={handleDeleteRecordsBulk} />} />
+                        <Route path="/lending/*" element={<LendingList records={borrowRecords} requests={requests} onBorrow={() => openBorrowModal()} onReturn={initiateReturn} onReturnBulk={() => {}} onDelete={handleDeleteRecord} onDeleteBulk={handleDeleteRecordsBulk} />} />
                         <Route path="/settings/*" element={settings ? <Settings settings={settings} onSave={storage.saveSettings} /> : null} />
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />
                     </Routes>

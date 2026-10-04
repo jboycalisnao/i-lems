@@ -8,7 +8,7 @@ interface BorrowModalProps {
   availableItems: InventoryItem[];
   initialItem?: InventoryItem;
   specificId?: string; // If set, we are borrowing a specific physical unit
-  onConfirm: (item: InventoryItem, borrowerName: string, borrowerId: string, quantity: number, dueDate: string, specificId?: string) => void;
+  onConfirm: (item: InventoryItem, borrowerName: string, borrowerId: string, quantity: number, dueDate: string, borrowerEmail?: string, specificId?: string) => void;
   onCancel: () => void;
 }
 
@@ -16,6 +16,7 @@ const BorrowModal: React.FC<BorrowModalProps> = ({ availableItems, initialItem, 
   const [selectedItemId, setSelectedItemId] = useState<string>(initialItem?.id || '');
   const [borrowerName, setBorrowerName] = useState('');
   const [borrowerId, setBorrowerId] = useState('');
+  const [borrowerEmail, setBorrowerEmail] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [dueDate, setDueDate] = useState('');
 
@@ -46,7 +47,7 @@ const BorrowModal: React.FC<BorrowModalProps> = ({ availableItems, initialItem, 
         alert("Quantity exceeds available loan stock.");
         return;
     }
-    onConfirm(selectedItem, borrowerName, borrowerId, quantity, dueDate, specificId);
+    onConfirm(selectedItem, borrowerName, borrowerId, quantity, dueDate, borrowerEmail.trim() || undefined, specificId);
   };
 
   // Filter items that have available stock for borrowing
@@ -154,6 +155,17 @@ const BorrowModal: React.FC<BorrowModalProps> = ({ availableItems, initialItem, 
               onChange={(e) => setBorrowerId(e.target.value)}
               className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 bg-white shadow-sm"
               placeholder="e.g. 2024-1001"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Borrower Email (Optional)</label>
+            <input
+              type="email"
+              value={borrowerEmail}
+              onChange={(e) => setBorrowerEmail(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 bg-white shadow-sm"
+              placeholder="e.g. borrower@school.edu"
             />
           </div>
 

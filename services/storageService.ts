@@ -291,6 +291,19 @@ export const borrowItem = async (itemId: string, borrowerName: string, borrowerI
         const retry = await supabase.from('borrow_records').insert(fallbackPayload);
         recordError = retry.error;
     }
+    if (recordError && (recordError.message?.includes('specificId') || recordError.message?.includes('specific_id'))) {
+        const altPayload = { ...recordPayload };
+        delete altPayload.specificId;
+        if (specificId) altPayload.specific_id = specificId;
+        const retryAlt = await supabase.from('borrow_records').insert(altPayload);
+        if (!retryAlt.error) {
+            recordError = null;
+        } else {
+            delete altPayload.specific_id;
+            const retryNone = await supabase.from('borrow_records').insert(altPayload);
+            recordError = retryNone.error;
+        }
+    }
 
     if (recordError) return { success: false, message: recordError.message };
     return { success: true };
@@ -323,8 +336,19 @@ export const returnItem = async (recordId: string, details: { good: number; defe
 };
 
 export const deleteBorrowRecord = async (id: string): Promise<boolean> => {
+    const { data: record } = await supabase.from('borrow_records').select('*').eq('id', id).single();
     const { error } = await supabase.from('borrow_records').delete().eq('id', id);
     if (error) throw error;
+    if (record && (record.status === 'Borrowed' || record.status === 'Overdue')) {
+        const itemId = readField(record, 'itemid', 'itemId', 'item_id');
+        if (itemId) {
+            const { data: item } = await supabase.from('inventory_items').select('*').eq('id', itemId).single();
+            if (item) {
+                const newBorrowed = Math.max(0, toNumber(item.borrowedQuantity) - toNumber(record.quantity));
+                await supabase.from('inventory_items').update({ borrowedQuantity: newBorrowed }).eq('id', itemId);
+            }
+        }
+    }
     return true;
 };
 

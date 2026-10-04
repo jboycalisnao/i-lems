@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { BorrowRecord, BorrowRequest } from '../types';
-import { Search, RotateCcw, CheckSquare, Square, ChevronDown, ChevronRight, Package, Trash2, AlertCircle, ShoppingBag, Layers, Box, User, Calendar } from 'lucide-react';
+import { Search, RotateCcw, CheckSquare, Square, ChevronDown, ChevronRight, Package, Trash2, AlertCircle, ShoppingBag, Layers, Box, User, Calendar, HandPlatter } from 'lucide-react';
 import { getCategoryIcon, getCategoryColor } from '../constants';
 
 interface LendingListProps {
@@ -12,9 +12,10 @@ interface LendingListProps {
   onReturnBulk: (recordIds: string[]) => void;
   onDelete: (recordId: string) => void;
   onDeleteBulk: (recordIds: string[]) => void;
+  onBorrow?: () => void;
 }
 
-const LendingList: React.FC<LendingListProps> = ({ records, requests, onReturn, onReturnBulk, onDelete, onDeleteBulk }) => {
+const LendingList: React.FC<LendingListProps> = ({ records, requests, onReturn, onReturnBulk, onDelete, onDeleteBulk, onBorrow }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const routeTab = location.pathname.split('/').filter(Boolean)[1];
@@ -166,21 +167,34 @@ const LendingList: React.FC<LendingListProps> = ({ records, requests, onReturn, 
                 />
             </div>
 
-            <div className="flex items-center gap-2 bg-gray-200/50 p-1 rounded-md border border-gray-200">
-                 <button
-                    onClick={() => navigate('/lending/by-item')}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'item' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                 >
-                     <Box className="w-4 h-4" />
-                     <span className="hidden sm:inline">By Item</span>
-                 </button>
-                 <button
-                    onClick={() => navigate('/lending/by-request')}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'request' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                 >
-                     <Layers className="w-4 h-4" />
-                     <span className="hidden sm:inline">By Request</span>
-                 </button>
+            <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 bg-gray-200/50 p-1 rounded-md border border-gray-200">
+                     <button
+                        onClick={() => navigate('/lending/by-item')}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'item' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                     >
+                         <Box className="w-4 h-4" />
+                         <span className="hidden sm:inline">By Item</span>
+                     </button>
+                     <button
+                        onClick={() => navigate('/lending/by-request')}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'request' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                     >
+                         <Layers className="w-4 h-4" />
+                         <span className="hidden sm:inline">By Request</span>
+                     </button>
+                </div>
+
+                {onBorrow && (
+                    <button
+                        type="button"
+                        onClick={onBorrow}
+                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-md text-sm font-semibold transition-all shadow-sm flex-shrink-0"
+                    >
+                        <HandPlatter className="w-4 h-4" />
+                        <span>New Loan</span>
+                    </button>
+                )}
             </div>
         </div>
         
@@ -414,7 +428,17 @@ const LendingList: React.FC<LendingListProps> = ({ records, requests, onReturn, 
         }) : (
             <div className="flex flex-col items-center justify-center h-64 text-gray-500">
                 <Package className="w-12 h-12 mb-2 opacity-20" />
-                <p>No borrow records found.</p>
+                <p className="font-medium text-gray-600">No borrow records found.</p>
+                {onBorrow && (
+                    <button
+                        type="button"
+                        onClick={onBorrow}
+                        className="mt-3 flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold transition-all shadow-sm"
+                    >
+                        <HandPlatter className="w-4 h-4" />
+                        <span>Create New Loan</span>
+                    </button>
+                )}
             </div>
         )}
       </div>
