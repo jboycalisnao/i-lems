@@ -451,17 +451,94 @@ export const deleteBorrowRecord = async (id: string): Promise<boolean> => {
 // --- Categories ---
 
 export const getCategories = async (): Promise<Category[]> => {
-    const { data, error } = await supabase.from('categories').select('*');
+    const { data, error } = await supabase.from('categories').select('*').order('name', { ascending: true });
     if (error) throw error;
-    return data || [];
+    const cats: Category[] = (data || []).map((c: any) => ({
+        id: String(c.id),
+        name: String(c.name || ''),
+        isDefault: Boolean(readField(c, 'isDefault', 'is_default', 'isdefault')) || c.name === 'General'
+    }));
+    return cats;
 };
 
-export const addCategory = async (name: string) => {
-    await supabase.from('categories').insert({ id: crypto.randomUUID(), name });
+export const addCategory = async (name: string): Promise<Category> => {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error('Category name cannot be empty.');
+
+    // Check for existing category with same name (case-insensitive)
+    const { data: existing, error: checkError } = await supabase
+        .from('categories')
+        .select('*')
+        .ilike('name', trimmed);
+
+    if (checkError) throw checkError;
+    if (existing && existing.length > 0) {
+        throw new Error(`A category named "${trimmed}" already exists.`);
+    }
+
+    const newCategory: Category = {
+        id: crypto.randomUUID(),
+        name: trimmed,
+        isDefault: trimmed.toLowerCase() === 'general'
+    };
+
+    const { error: insertError } = await supabase.from('categories').insert({
+        id: newCategory.id,
+        name: newCategory.name
+    });
+    if (insertError) throw insertError;
+    return newCategory;
 };
 
-export const deleteCategory = async (id: string) => {
-    await supabase.from('categories').delete().eq('id', id);
+export const updateCategory = async (id: string, newName: string, oldName?: string): Promise<{ success: boolean; message?: string }> => {
+    const trimmed = newName.trim();
+    if (!trimmed) throw new Error('Category name cannot be empty.');
+
+    // Check if another category already has this name
+    const { data: existing, error: checkError } = await supabase
+        .from('categories')
+        .select('*')
+        .ilike('name', trimmed)
+        .neq('id', id);
+
+    if (checkError) throw checkError;
+    if (existing && existing.length > 0) {
+        throw new Error(`Another category named "${trimmed}" already exists.`);
+    }
+
+    const { error: updateError } = await supabase
+        .from('categories')
+        .update({ name: trimmed })
+        .eq('id', id);
+
+    if (updateError) throw updateError;
+
+    // Cascade name change to inventory items and borrow records
+    if (oldName && oldName.trim() !== trimmed) {
+        const prev = oldName.trim();
+        await supabase.from('inventory_items').update({ category: trimmed }).eq('category', prev);
+        await supabase.from('borrow_records').update({ itemCategory: trimmed }).eq('itemCategory', prev);
+    }
+
+    return { success: true };
+};
+
+export const deleteCategory = async (id: string, categoryName?: string, reassignTo: string = 'General'): Promise<{ success: boolean; message?: string }> => {
+    if (categoryName?.toLowerCase() === 'general') {
+        throw new Error('The default "General" category cannot be deleted.');
+    }
+
+    // Reassign inventory items and borrow records if categoryName is provided
+    if (categoryName) {
+        const prev = categoryName.trim();
+        await supabase.from('inventory_items').update({ category: reassignTo }).eq('category', prev);
+        await supabase.from('borrow_records').update({ itemCategory: reassignTo }).eq('itemCategory', prev);
+    }
+
+    const { error: deleteError } = await supabase.from('categories').delete().eq('id', id);
+    if (deleteError) throw deleteError;
+
+    return { success: true };
 };
 
 // --- Borrow Requests ---

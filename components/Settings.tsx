@@ -1,19 +1,24 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { AppSettings, Category } from '../types';
+import { AppSettings, Category, InventoryItem } from '../types';
 import * as storage from '../services/storageService';
 import * as notifications from '../services/notificationService';
 import { 
   Upload, Save, CheckCircle, Plus, Trash2, Edit2, X, Loader2, Type, Lock, 
   User, Eye, EyeOff, Mail, Server, FileCode, Key, Users, Send, 
-  ExternalLink, Copy, Code, Zap, Clock, AlertTriangle, Link as LinkIcon, MailCheck, Database
+  ExternalLink, Copy, Code, Zap, Clock, AlertTriangle, Link as LinkIcon, MailCheck, Database,
+  Search, Check, Tag, RefreshCw, AlertCircle, Layers, ArrowRight
 } from 'lucide-react';
 import { SYSTEM_SHORT_NAME } from '../branding';
+import { getCategoryColor, getCategoryIcon } from '../constants';
 
 interface SettingsProps {
   settings: AppSettings;
   onSave: (settings: AppSettings) => boolean | Promise<boolean>;
+  items?: InventoryItem[];
+  categories?: Category[];
+  onCategoriesChange?: () => void;
 }
 
 interface SmtpPublicConfig {
@@ -29,7 +34,13 @@ interface SmtpPublicConfig {
   endpointError?: string;
 }
 
-const Settings: React.FC<SettingsProps> = ({ settings, onSave }) => {
+const Settings: React.FC<SettingsProps> = ({ 
+  settings, 
+  onSave, 
+  items = [], 
+  categories: propCategories = [], 
+  onCategoriesChange 
+}) => {
   const location = useLocation();
   const navigate = useNavigate();
   const routeTab = location.pathname.split('/').filter(Boolean)[1];
@@ -50,8 +61,20 @@ const Settings: React.FC<SettingsProps> = ({ settings, onSave }) => {
     fromName: SYSTEM_SHORT_NAME,
     fromEmail: ''
   });
-  const [categories, setCategories] = useState<Category[]>([]);
+
+  // --- Category CRUD State ---
+  const [categories, setCategories] = useState<Category[]>(propCategories);
+  const [isLoadingCategories, setIsLoadingCategories] = useState(false);
   const [newCategory, setNewCategory] = useState('');
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
+  const [categorySearch, setCategorySearch] = useState('');
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState('');
+  const [isSavingCategory, setIsSavingCategory] = useState(false);
+  const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
+  const [reassignCategoryTo, setReassignCategoryTo] = useState<string>('General');
+  const [isDeletingCategory, setIsDeletingCategory] = useState(false);
+  const [categoryFeedback, setCategoryFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
     if (routeTab !== 'general' && routeTab !== 'categories' && routeTab !== 'automation') {
@@ -139,7 +162,44 @@ ALTER TABLE borrow_records ADD COLUMN IF NOT EXISTS "borrowerEmail" TEXT;`;
     }
   }, [activeTab]);
 
-  const loadCategories = async () => { setCategories(await storage.getCategories()); };
+  useEffect(() => {
+    if (propCategories && propCategories.length > 0) {
+      setCategories(propCategories);
+    }
+  }, [propCategories]);
+
+  const loadCategories = async () => {
+    setIsLoadingCategories(true);
+    try {
+      const data = await storage.getCategories();
+      setCategories(data);
+    } catch (e: any) {
+      console.error('Failed to load categories:', e);
+    } finally {
+      setIsLoadingCategories(false);
+    }
+  };
+
+  useEffect(() => {
+    if (categoryFeedback) {
+      const timer = setTimeout(() => setCategoryFeedback(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [categoryFeedback]);
+
+  const getItemCount = (catName: string): number => {
+    const target = catName.trim().toLowerCase();
+    return items.filter(item => (item.category || '').trim().toLowerCase() === target).length;
+  };
+
+  const totalCategorizedItems = items.length;
+
+  const filteredCategories = useMemo(() => {
+    const q = categorySearch.trim().toLowerCase();
+    if (!q) return categories;
+    return categories.filter(c => c.name.toLowerCase().includes(q));
+  }, [categories, categorySearch]);
+
   useEffect(() => { setFormData(settings); }, [settings]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -249,11 +309,112 @@ ALTER TABLE borrow_records ADD COLUMN IF NOT EXISTS "borrowerEmail" TEXT;`;
     alert("Code copied!");
   };
 
-  const handleAddCategory = async () => {
-    if (!newCategory.trim()) return;
-    await storage.addCategory(newCategory.trim());
-    await loadCategories();
-    setNewCategory('');
+  // --- Category CRUD Handlers ---
+
+  const handleAddCategory = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = newCategory.trim();
+    if (!trimmed) {
+      setCategoryFeedback({ type: 'error', message: 'Please enter a category name.' });
+      return;
+    }
+    if (categories.some(c => c.name.trim().toLowerCase() === trimmed.toLowerCase())) {
+      setCategoryFeedback({ type: 'error', message: `Category "${trimmed}" already exists.` });
+      return;
+    }
+
+    setIsAddingCategory(true);
+    setCategoryFeedback(null);
+    try {
+      await storage.addCategory(trimmed);
+      setNewCategory('');
+      setCategoryFeedback({ type: 'success', message: `Category "${trimmed}" successfully added!` });
+      await loadCategories();
+      onCategoriesChange?.();
+    } catch (err: any) {
+      setCategoryFeedback({ type: 'error', message: err.message || 'Failed to add category.' });
+    } finally {
+      setIsAddingCategory(false);
+    }
+  };
+
+  const handleStartEdit = (cat: Category) => {
+    setEditingCategoryId(cat.id);
+    setEditingCategoryName(cat.name);
+    setCategoryFeedback(null);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingCategoryId(null);
+    setEditingCategoryName('');
+  };
+
+  const handleSaveEdit = async (cat: Category) => {
+    const trimmed = editingCategoryName.trim();
+    if (!trimmed) {
+      setCategoryFeedback({ type: 'error', message: 'Category name cannot be empty.' });
+      return;
+    }
+    if (trimmed.toLowerCase() === cat.name.trim().toLowerCase()) {
+      handleCancelEdit();
+      return;
+    }
+    if (categories.some(c => c.id !== cat.id && c.name.trim().toLowerCase() === trimmed.toLowerCase())) {
+      setCategoryFeedback({ type: 'error', message: `Another category named "${trimmed}" already exists.` });
+      return;
+    }
+
+    setIsSavingCategory(true);
+    setCategoryFeedback(null);
+    try {
+      await storage.updateCategory(cat.id, trimmed, cat.name);
+      const affectedCount = getItemCount(cat.name);
+      setCategoryFeedback({
+        type: 'success',
+        message: affectedCount > 0
+          ? `Category renamed to "${trimmed}". ${affectedCount} inventory item(s) updated!`
+          : `Category renamed to "${trimmed}".`
+      });
+      handleCancelEdit();
+      await loadCategories();
+      onCategoriesChange?.();
+    } catch (err: any) {
+      setCategoryFeedback({ type: 'error', message: err.message || 'Failed to rename category.' });
+    } finally {
+      setIsSavingCategory(false);
+    }
+  };
+
+  const handleOpenDeleteModal = (cat: Category) => {
+    if (cat.name.toLowerCase() === 'general') return;
+    setCategoryToDelete(cat);
+    const available = categories.filter(c => c.id !== cat.id);
+    const hasGeneral = available.some(c => c.name.toLowerCase() === 'general');
+    setReassignCategoryTo(hasGeneral ? 'General' : (available[0]?.name || 'General'));
+    setCategoryFeedback(null);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!categoryToDelete) return;
+    setIsDeletingCategory(true);
+    setCategoryFeedback(null);
+    try {
+      const affectedCount = getItemCount(categoryToDelete.name);
+      await storage.deleteCategory(categoryToDelete.id, categoryToDelete.name, reassignCategoryTo);
+      setCategoryFeedback({
+        type: 'success',
+        message: affectedCount > 0
+          ? `Category "${categoryToDelete.name}" deleted. ${affectedCount} item(s) reassigned to "${reassignCategoryTo}".`
+          : `Category "${categoryToDelete.name}" deleted successfully.`
+      });
+      setCategoryToDelete(null);
+      await loadCategories();
+      onCategoriesChange?.();
+    } catch (err: any) {
+      setCategoryFeedback({ type: 'error', message: err.message || 'Failed to delete category.' });
+    } finally {
+      setIsDeletingCategory(false);
+    }
   };
 
   const CardStyle = "bg-white border border-gray-200 rounded-md shadow-lg overflow-hidden";
@@ -357,33 +518,236 @@ ALTER TABLE borrow_records ADD COLUMN IF NOT EXISTS "borrowerEmail" TEXT;`;
         )}
 
         {activeTab === 'categories' && (
-            <div className={`${CardStyle} p-8 animate-in fade-in slide-in-from-top-2 duration-300`}>
-                <h3 className="text-xl font-bold text-gray-800 mb-6">Equipment Categories</h3>
-                <div className="space-y-6">
-                    <div className="flex gap-2">
-                        <input type="text" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder="Enter category name (e.g., Robotics)" className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none shadow-sm" />
-                        <button onClick={handleAddCategory} className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 shadow-md font-bold flex items-center gap-2">
-                            <Plus className="w-5 h-5"/> Add
+            <div className={`${CardStyle} p-6 sm:p-8 animate-in fade-in slide-in-from-top-2 duration-300 space-y-6`}>
+                {/* Status / Feedback Banner */}
+                {categoryFeedback && (
+                    <div className={`p-4 rounded-xl flex items-center justify-between gap-3 text-sm font-semibold transition-all ${
+                        categoryFeedback.type === 'success' 
+                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-sm' 
+                            : 'bg-rose-50 text-rose-800 border border-rose-200 shadow-sm'
+                    }`}>
+                        <div className="flex items-center gap-2">
+                            {categoryFeedback.type === 'success' ? (
+                                <CheckCircle className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                            ) : (
+                                <AlertCircle className="w-5 h-5 text-rose-600 flex-shrink-0" />
+                            )}
+                            <span>{categoryFeedback.message}</span>
+                        </div>
+                        <button 
+                            type="button" 
+                            onClick={() => setCategoryFeedback(null)} 
+                            className="p-1 hover:bg-black/5 rounded-md transition-colors"
+                        >
+                            <X className="w-4 h-4" />
                         </button>
                     </div>
-                    <div className="bg-gray-50 rounded-md border border-gray-200 overflow-hidden">
-                        <ul className="divide-y divide-gray-200">
-                            {categories.map(cat => (
-                                <li key={cat.id} className="px-6 py-4 flex justify-between items-center group bg-white hover:bg-gray-50 transition-colors">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                                        <span className="font-medium text-gray-700">{cat.name}</span>
-                                        {cat.isDefault && <span className="text-[10px] px-2 py-0.5 bg-gray-100 text-gray-400 rounded-full font-bold">System Default</span>}
-                                    </div>
-                                    {!cat.isDefault && (
-                                        <button onClick={() => storage.deleteCategory(cat.id).then(loadCategories)} className="p-2 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100">
-                                            <Trash2 className="w-4 h-4"/>
-                                        </button>
-                                    )}
-                                </li>
-                            ))}
-                        </ul>
+                )}
+
+                {/* Header & Stats */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-gray-100">
+                    <div>
+                        <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                            <Layers className="w-5 h-5 text-blue-600" />
+                            Equipment Categories
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-1">
+                            Classify laboratory equipment. Renaming a category automatically migrates all linked inventory items.
+                        </p>
                     </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold border border-blue-100">
+                            <Tag className="w-3.5 h-3.5" />
+                            <span>{categories.length} Categories</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold border border-slate-200">
+                            <span>{totalCategorizedItems} Total Items</span>
+                        </div>
+                        <button 
+                            type="button"
+                            onClick={loadCategories} 
+                            disabled={isLoadingCategories}
+                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg border border-gray-200 transition-colors"
+                            title="Refresh categories"
+                        >
+                            <RefreshCw className={`w-4 h-4 ${isLoadingCategories ? 'animate-spin text-blue-600' : ''}`} />
+                        </button>
+                    </div>
+                </div>
+
+                {/* Create Category Form */}
+                <form onSubmit={handleAddCategory} className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-3">
+                    <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
+                        Create New Category
+                    </label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                        <div className="relative flex-1">
+                            <Tag className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <input
+                                type="text"
+                                value={newCategory}
+                                onChange={(e) => setNewCategory(e.target.value)}
+                                placeholder="Enter category name (e.g., Robotics, Optics, Glassware)"
+                                className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-300 rounded-lg text-sm text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-sm font-medium"
+                            />
+                        </div>
+                        <button
+                            type="submit"
+                            disabled={isAddingCategory || !newCategory.trim()}
+                            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                        >
+                            {isAddingCategory ? (
+                                <>
+                                    <Loader2 className="w-4 h-4 animate-spin" /> Adding...
+                                </>
+                            ) : (
+                                <>
+                                    <Plus className="w-4 h-4" /> Add Category
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </form>
+
+                {/* Search & Filter Bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+                    <div className="relative flex-1 max-w-sm">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <input
+                            type="text"
+                            value={categorySearch}
+                            onChange={(e) => setCategorySearch(e.target.value)}
+                            placeholder="Search categories..."
+                            className="w-full pl-9 pr-8 py-2 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                        {categorySearch && (
+                            <button 
+                                type="button"
+                                onClick={() => setCategorySearch('')}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5"
+                            >
+                                <X className="w-3.5 h-3.5" />
+                            </button>
+                        )}
+                    </div>
+                    <span className="text-xs text-gray-400 font-medium">
+                        Showing {filteredCategories.length} of {categories.length} categories
+                    </span>
+                </div>
+
+                {/* Categories List */}
+                <div className="border border-gray-200 rounded-xl overflow-hidden shadow-sm bg-white divide-y divide-gray-100">
+                    {filteredCategories.length === 0 ? (
+                        <div className="py-12 text-center text-gray-500">
+                            <Tag className="w-10 h-10 mx-auto text-gray-300 mb-2" />
+                            <p className="font-semibold text-sm">No categories found</p>
+                            <p className="text-xs text-gray-400 mt-1">
+                                {categorySearch ? 'Try a different search term.' : 'Get started by creating your first equipment category above.'}
+                            </p>
+                        </div>
+                    ) : (
+                        filteredCategories.map(cat => {
+                            const count = getItemCount(cat.name);
+                            const color = getCategoryColor(cat.name);
+                            const isEditing = editingCategoryId === cat.id;
+                            const isDefault = cat.isDefault || cat.name.toLowerCase() === 'general';
+
+                            return (
+                                <div
+                                    key={cat.id}
+                                    className="px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors group"
+                                >
+                                    <div className="flex items-center gap-3.5 flex-1 min-w-0">
+                                        <div 
+                                            className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-105"
+                                            style={{ 
+                                                backgroundColor: `${color}18`, 
+                                                color: color,
+                                                border: `1px solid ${color}30` 
+                                            }}
+                                        >
+                                            {getCategoryIcon(cat.name)}
+                                        </div>
+
+                                        {isEditing ? (
+                                            <div className="flex-1 flex items-center gap-2">
+                                                <input
+                                                    type="text"
+                                                    autoFocus
+                                                    value={editingCategoryName}
+                                                    onChange={(e) => setEditingCategoryName(e.target.value)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') handleSaveEdit(cat);
+                                                        if (e.key === 'Escape') handleCancelEdit();
+                                                    }}
+                                                    className="flex-1 px-3 py-1.5 border border-blue-400 rounded-lg text-sm font-semibold text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSaveEdit(cat)}
+                                                    disabled={isSavingCategory}
+                                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm transition-colors disabled:opacity-50"
+                                                    title="Save category name"
+                                                >
+                                                    {isSavingCategory ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                                                    Save
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleCancelEdit}
+                                                    disabled={isSavingCategory}
+                                                    className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors"
+                                                    title="Cancel"
+                                                >
+                                                    <X className="w-3.5 h-3.5" />
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+                                                <span className="font-bold text-gray-900 text-sm truncate">
+                                                    {cat.name}
+                                                </span>
+
+                                                <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap">
+                                                    {count} {count === 1 ? 'item' : 'items'}
+                                                </span>
+
+                                                {isDefault && (
+                                                    <span className="text-[10px] px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-100 rounded-full font-bold whitespace-nowrap">
+                                                        System Default
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {!isEditing && (
+                                        <div className="flex items-center gap-1 self-end sm:self-center">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleStartEdit(cat)}
+                                                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                                title="Rename Category"
+                                            >
+                                                <Edit2 className="w-4 h-4" />
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => handleOpenDeleteModal(cat)}
+                                                disabled={cat.name.toLowerCase() === 'general'}
+                                                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+                                                title={cat.name.toLowerCase() === 'general' ? 'General is the default fallback and cannot be deleted' : 'Delete Category'}
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })
+                    )}
                 </div>
             </div>
         )}
@@ -476,6 +840,86 @@ ALTER TABLE borrow_records ADD COLUMN IF NOT EXISTS "borrowerEmail" TEXT;`;
                         </button>
                     </div>
                 </form>
+            </div>
+        )}
+
+        {/* Delete & Reassign Category Modal */}
+        {categoryToDelete && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 border border-gray-100 animate-in zoom-in-95 duration-200 space-y-4">
+                    <div className="flex items-start gap-4">
+                        <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0">
+                            <AlertTriangle className="w-6 h-6" />
+                        </div>
+                        <div className="flex-1">
+                            <h4 className="text-lg font-bold text-gray-900">Delete Category</h4>
+                            <p className="text-sm text-gray-500 mt-1">
+                                Are you sure you want to delete <span className="font-bold text-gray-800">"{categoryToDelete.name}"</span>?
+                            </p>
+                        </div>
+                        <button 
+                            type="button"
+                            onClick={() => !isDeletingCategory && setCategoryToDelete(null)} 
+                            className="text-gray-400 hover:text-gray-600 p-1 rounded-md"
+                        >
+                            <X className="w-5 h-5" />
+                        </button>
+                    </div>
+
+                    {getItemCount(categoryToDelete.name) > 0 ? (
+                        <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg space-y-3">
+                            <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
+                                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                                <span>{getItemCount(categoryToDelete.name)} inventory item(s) currently linked</span>
+                            </div>
+                            <p className="text-xs text-amber-700 leading-relaxed">
+                                To protect your records and prevent orphaned inventory items, please select an existing category where these items will be migrated:
+                            </p>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                                    Reassign items to:
+                                </label>
+                                <select
+                                    value={reassignCategoryTo}
+                                    onChange={(e) => setReassignCategoryTo(e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white text-sm font-semibold text-gray-800 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
+                                >
+                                    {categories
+                                        .filter(c => c.id !== categoryToDelete.id)
+                                        .map(c => (
+                                            <option key={c.id} value={c.name}>
+                                                {c.name} {c.name.toLowerCase() === 'general' ? '(Default)' : ''}
+                                            </option>
+                                        ))}
+                                </select>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-600">
+                            No inventory items currently belong to this category. It will be removed permanently.
+                        </div>
+                    )}
+
+                    <div className="flex items-center justify-end gap-3 pt-2">
+                        <button
+                            type="button"
+                            disabled={isDeletingCategory}
+                            onClick={() => setCategoryToDelete(null)}
+                            className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            disabled={isDeletingCategory}
+                            onClick={handleConfirmDelete}
+                            className="px-5 py-2 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50"
+                        >
+                            {isDeletingCategory ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                            {getItemCount(categoryToDelete.name) > 0 ? 'Delete & Reassign Items' : 'Delete Category'}
+                        </button>
+                    </div>
+                </div>
             </div>
         )}
     </div>

@@ -416,7 +416,7 @@ const App: React.FC = () => {
                         <Route path="/requests" element={<RequestsList onRefresh={() => refreshData(true)} />} />
                         <Route path="/scanner/*" element={<Scanner items={items} borrowRecords={borrowRecords} onBorrow={openBorrowModal} onReturn={initiateReturn} />} />
                         <Route path="/lending/*" element={<LendingList records={borrowRecords} requests={requests} onReturn={initiateReturn} onReturnBulk={() => {}} onDelete={handleDeleteRecord} onDeleteBulk={handleDeleteRecordsBulk} />} />
-                        <Route path="/settings/*" element={settings ? <Settings settings={settings} onSave={storage.saveSettings} /> : null} />
+                        <Route path="/settings/*" element={settings ? <Settings settings={settings} onSave={storage.saveSettings} items={items} categories={categories} onCategoriesChange={() => refreshData(true)} /> : null} />
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />
                     </Routes>
                 </div>
