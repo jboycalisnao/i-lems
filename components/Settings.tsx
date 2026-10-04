@@ -105,13 +105,17 @@ ALTER TABLE borrow_requests ADD COLUMN IF NOT EXISTS "instructorName" TEXT;`;
         headers: { 'Accept': 'application/json' },
         cache: 'no-store'
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
+      const isJson = contentType.includes('application/json');
+      const data = isJson ? await response.json().catch(() => ({})) : null;
+
+      if (!response.ok) {
+        throw new Error(data?.error || `HTTP ${response.status}`);
+      }
+      if (!isJson) {
         throw new Error('API returned HTML instead of JSON. Ensure latest Vercel deployment is active.');
       }
-      const config = await response.json();
-      setSmtpConfig({ ...config, endpointError: undefined });
+      setSmtpConfig({ ...data, endpointError: undefined });
     } catch (error) {
       console.warn('Could not load SMTP status:', error);
       setSmtpConfig(prev => ({
