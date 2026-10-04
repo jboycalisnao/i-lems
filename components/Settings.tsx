@@ -97,7 +97,8 @@ WITH CHECK (bucket_id = 'app-assets' AND name = 'branding/app-logo');
 -- 3. Existing table migrations
 ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS "labInCharge" TEXT;
 
-ALTER TABLE borrow_requests ADD COLUMN IF NOT EXISTS "instructorName" TEXT;`;
+ALTER TABLE borrow_requests ADD COLUMN IF NOT EXISTS "instructorName" TEXT;
+ALTER TABLE borrow_records ADD COLUMN IF NOT EXISTS "borrowerEmail" TEXT;`;
 
   const loadSmtpConfig = async () => {
     try {

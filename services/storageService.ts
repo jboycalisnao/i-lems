@@ -270,7 +270,7 @@ export const borrowItem = async (itemId: string, borrowerName: string, borrowerI
     const { error: updateError } = await supabase.from('inventory_items').update({ borrowedQuantity: newBorrowed }).eq('id', itemId);
     if (updateError) return { success: false, message: updateError.message };
 
-    const { error: recordError } = await supabase.from('borrow_records').insert({
+    const recordPayload: Record<string, any> = {
         id: crypto.randomUUID(),
         itemid: itemId,
         itemName: item.name,
@@ -283,7 +283,14 @@ export const borrowItem = async (itemId: string, borrowerName: string, borrowerI
         dueDate: dueDate,
         status: 'Borrowed',
         specificId: specificId
-    });
+    };
+
+    let { error: recordError } = await supabase.from('borrow_records').insert(recordPayload);
+    if (recordError && (recordError.message?.includes('borrowerEmail') || recordError.message?.includes('schema cache'))) {
+        const { borrowerEmail: _, ...fallbackPayload } = recordPayload;
+        const retry = await supabase.from('borrow_records').insert(fallbackPayload);
+        recordError = retry.error;
+    }
 
     if (recordError) return { success: false, message: recordError.message };
     return { success: true };
@@ -393,7 +400,7 @@ export const processApprovedRequest = async (request: BorrowRequest) => {
             await supabase.from('inventory_items').update({ borrowedQuantity: newBorrowed }).eq('id', item.id);
 
             const recordId = crypto.randomUUID();
-            await supabase.from('borrow_records').insert({
+            const recordPayload: Record<string, any> = {
                 id: recordId,
                 itemid: item.id,
                 itemName: item.name,
@@ -405,7 +412,16 @@ export const processApprovedRequest = async (request: BorrowRequest) => {
                 borrowDate: new Date().toISOString().split('T')[0],
                 dueDate: request.returnDate,
                 status: 'Borrowed'
-            });
+            };
+
+            let { error: insertError } = await supabase.from('borrow_records').insert(recordPayload);
+            if (insertError && (insertError.message?.includes('borrowerEmail') || insertError.message?.includes('schema cache'))) {
+                const { borrowerEmail: _, ...fallbackPayload } = recordPayload;
+                const retry = await supabase.from('borrow_records').insert(fallbackPayload);
+                insertError = retry.error;
+            }
+
+            if (insertError) throw new Error(insertError.message);
 
             reqItem.linkedRecordId = recordId;
         }
