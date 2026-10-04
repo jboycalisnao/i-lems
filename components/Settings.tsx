@@ -110,7 +110,9 @@ ALTER TABLE borrow_requests ADD COLUMN IF NOT EXISTS "instructorName" TEXT;`;
       const data = isJson ? await response.json().catch(() => ({})) : null;
 
       if (!response.ok) {
-        throw new Error(data?.error || `HTTP ${response.status}`);
+        const err = data?.error;
+        const msg = typeof err === 'string' ? err : err?.message || err?.code || data?.message || `HTTP ${response.status}`;
+        throw new Error(msg);
       }
       if (!isJson) {
         throw new Error('API returned HTML instead of JSON. Ensure latest Vercel deployment is active.');

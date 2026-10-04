@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import nodemailer from 'nodemailer';
 
 export const SYSTEM_SHORT_NAME = 'I-LEMS';
 
@@ -44,18 +43,23 @@ export const getConfig = (env: Environment) => {
   return { host, port, security, user, password, fromEmail, fromName };
 };
 
-export const createTransport = (env: Environment) => {
+export const createTransport = async (env: Environment) => {
   const config = getConfig(env);
   const secure = config.security === 'tls' || config.port === 465;
 
-  const mailer = (nodemailer as any)?.createTransport ? nodemailer : (nodemailer as any)?.default;
-  if (!mailer || typeof mailer.createTransport !== 'function') {
+  const mailerModule = await import('nodemailer');
+  const createTransportFn =
+    (mailerModule as any).createTransport ||
+    (mailerModule as any).default?.createTransport ||
+    (mailerModule as any).default;
+
+  if (typeof createTransportFn !== 'function') {
     throw new Error('nodemailer transport engine is unavailable');
   }
 
   return {
     config,
-    transporter: mailer.createTransport({
+    transporter: createTransportFn({
       host: config.host,
       port: config.port,
       secure,
@@ -96,7 +100,7 @@ export const getPublicSmtpConfig = (env: Environment) => {
 };
 
 export const verifySmtpConnection = async (env: Environment) => {
-  const { transporter } = createTransport(env);
+  const { transporter } = await createTransport(env);
   await transporter.verify();
 };
 
@@ -109,7 +113,7 @@ export const sendSmtpEmail = async (payload: SmtpEmailPayload, env: Environment)
     throw new Error('Email payload exceeds the allowed size.');
   }
 
-  const { config, transporter } = createTransport(env);
+  const { config, transporter } = await createTransport(env);
   await transporter.sendMail({
     from: {
       name: config.fromName,
