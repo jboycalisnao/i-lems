@@ -68,6 +68,11 @@ export const getPublicSmtpConfig = (env: Environment) => {
   const fromEmail = getEnv(env, 'SMTP_FROM_EMAIL', user);
   const fromName = getEnv(env, 'SMTP_FROM_NAME', SYSTEM_SHORT_NAME);
 
+  const missing: string[] = [];
+  if (!user) missing.push('SMTP_USER');
+  if (!password) missing.push('SMTP_PASSWORD');
+  if (!fromEmail) missing.push('SMTP_FROM_EMAIL');
+
   return {
     configured: Boolean(user && password && fromEmail),
     host,
@@ -75,7 +80,9 @@ export const getPublicSmtpConfig = (env: Environment) => {
     security,
     username: user,
     fromName,
-    fromEmail
+    fromEmail,
+    hasPassword: Boolean(password),
+    missing
   };
 };
 

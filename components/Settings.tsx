@@ -24,6 +24,9 @@ interface SmtpPublicConfig {
   username: string;
   fromName: string;
   fromEmail: string;
+  hasPassword?: boolean;
+  missing?: string[];
+  endpointError?: string;
 }
 
 const Settings: React.FC<SettingsProps> = ({ settings, onSave }) => {
@@ -105,12 +108,16 @@ ALTER TABLE borrow_requests ADD COLUMN IF NOT EXISTS "instructorName" TEXT;`;
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
-        throw new Error('API returned non-JSON response');
+        throw new Error('API returned HTML instead of JSON. Ensure latest Vercel deployment is active.');
       }
       const config = await response.json();
-      setSmtpConfig(config);
+      setSmtpConfig({ ...config, endpointError: undefined });
     } catch (error) {
       console.warn('Could not load SMTP status:', error);
+      setSmtpConfig(prev => ({
+        ...prev,
+        endpointError: error instanceof Error ? error.message : 'Could not reach /api/send-email'
+      }));
     }
   };
 
@@ -399,7 +406,7 @@ ALTER TABLE borrow_requests ADD COLUMN IF NOT EXISTS "instructorName" TEXT;`;
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div><label className="block text-xs font-bold text-gray-500 mb-1">Username</label><input readOnly value={smtpConfig.username || 'Not configured'} className="w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-sm" /></div>
-                            <div><label className="block text-xs font-bold text-gray-500 mb-1">Password</label><input readOnly type="password" value={smtpConfig.configured ? 'configured-secret' : ''} placeholder="Not configured" className="w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-sm" /></div>
+                            <div><label className="block text-xs font-bold text-gray-500 mb-1">Password</label><input readOnly type="password" value={smtpConfig.hasPassword || smtpConfig.configured ? 'configured-secret' : ''} placeholder={smtpConfig.hasPassword ? '••••••••••••••••' : 'Not configured'} className="w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-sm" /></div>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div><label className="block text-xs font-bold text-gray-500 mb-1">Sender Name</label><input readOnly value={smtpConfig.fromName || SYSTEM_SHORT_NAME} className="w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-sm" /></div>
@@ -408,7 +415,24 @@ ALTER TABLE borrow_requests ADD COLUMN IF NOT EXISTS "instructorName" TEXT;`;
 
                         <div className={`p-4 rounded-md border ${smtpConfig.configured ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
                             <p className="text-sm font-bold">{smtpConfig.configured ? 'SMTP credentials configured' : 'SMTP credentials not configured'}</p>
-                            <p className="text-xs mt-1">Configure the server-only SMTP variables in <span className="font-mono">.env.local</span> for development and in Vercel Environment Variables for deployment.</p>
+                            {smtpConfig.endpointError ? (
+                                <p className="text-xs mt-1 text-red-600 font-medium">
+                                    Server status: {smtpConfig.endpointError}
+                                </p>
+                            ) : smtpConfig.missing && smtpConfig.missing.length > 0 ? (
+                                <div className="text-xs mt-1 space-y-1">
+                                    <p>The backend endpoint is active, but the following variable(s) are missing on the server:</p>
+                                    <ul className="list-disc list-inside font-mono font-bold text-amber-900">
+                                        {smtpConfig.missing.map(m => (
+                                            <li key={m}>
+                                                {m} {m === 'SMTP_PASSWORD' && '(Check Vercel: clear the "Needs Attention" badge on SMTP_PASSWORD and redeploy)'}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            ) : (
+                                <p className="text-xs mt-1">Configure the server-only SMTP variables in <span className="font-mono">.env.local</span> for development and in Vercel Environment Variables for deployment.</p>
+                            )}
                         </div>
 
                         <div>
