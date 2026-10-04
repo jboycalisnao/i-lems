@@ -96,13 +96,35 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS "labInCharge" TEXT;
 
 ALTER TABLE borrow_requests ADD COLUMN IF NOT EXISTS "instructorName" TEXT;`;
 
+  const loadSmtpConfig = async () => {
+    try {
+      const response = await fetch('/api/send-email', {
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store'
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error('API returned non-JSON response');
+      }
+      const config = await response.json();
+      setSmtpConfig(config);
+    } catch (error) {
+      console.warn('Could not load SMTP status:', error);
+    }
+  };
+
   useEffect(() => {
     loadCategories();
-    fetch('/api/send-email')
-      .then(response => response.ok ? response.json() : Promise.reject(new Error('SMTP endpoint unavailable')))
-      .then(config => setSmtpConfig(config))
-      .catch(error => console.warn('Could not load SMTP status:', error));
+    loadSmtpConfig();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'automation') {
+      loadSmtpConfig();
+    }
+  }, [activeTab]);
+
   const loadCategories = async () => { setCategories(await storage.getCategories()); };
   useEffect(() => { setFormData(settings); }, [settings]);
 
@@ -151,6 +173,7 @@ ALTER TABLE borrow_requests ADD COLUMN IF NOT EXISTS "instructorName" TEXT;`;
           const result = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(result.error || 'SMTP verification failed.');
           alert('Gmail SMTP connection verified successfully.');
+          await loadSmtpConfig();
       } catch (error) {
           alert(error instanceof Error ? error.message : 'SMTP connection failed.');
       } finally {

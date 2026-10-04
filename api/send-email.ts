@@ -6,7 +6,18 @@ interface ApiRequest extends IncomingMessage {
 }
 
 const readBody = async (request: ApiRequest) => {
-  if (request.body && typeof request.body === 'object') return request.body as Record<string, unknown>;
+  if (request.body) {
+    if (typeof request.body === 'string') {
+      try {
+        return JSON.parse(request.body) as Record<string, unknown>;
+      } catch {
+        return {};
+      }
+    }
+    if (typeof request.body === 'object') {
+      return request.body as Record<string, unknown>;
+    }
+  }
 
   let raw = '';
   for await (const chunk of request) {
@@ -19,6 +30,7 @@ const readBody = async (request: ApiRequest) => {
 const sendJson = (response: ServerResponse, status: number, data: object) => {
   response.statusCode = status;
   response.setHeader('Content-Type', 'application/json');
+  response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   response.end(JSON.stringify(data));
 };
 

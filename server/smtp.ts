@@ -10,14 +10,28 @@ export interface SmtpEmailPayload {
 
 type Environment = Record<string, string | undefined>;
 
+const cleanValue = (raw?: string) => {
+  if (!raw) return '';
+  return raw.trim().replace(/^["']|["']$/g, '');
+};
+
+const cleanPassword = (raw?: string) => {
+  if (!raw) return '';
+  return raw.trim().replace(/^["']|["']$/g, '').replace(/\s/g, '');
+};
+
+const getEnv = (env: Environment, key: string, fallback = '') => {
+  return cleanValue(env[key] || env[`VITE_${key}`]) || fallback;
+};
+
 const getConfig = (env: Environment) => {
-  const host = env.SMTP_HOST || 'smtp.gmail.com';
-  const port = Number(env.SMTP_PORT || 465);
-  const security = (env.SMTP_SECURITY || (port === 465 ? 'tls' : 'starttls')).toLowerCase();
-  const user = env.SMTP_USER?.trim();
-  const password = env.SMTP_PASSWORD?.replace(/\s/g, '');
-  const fromEmail = env.SMTP_FROM_EMAIL?.trim() || user;
-  const fromName = env.SMTP_FROM_NAME?.trim() || SYSTEM_SHORT_NAME;
+  const host = getEnv(env, 'SMTP_HOST', 'smtp.gmail.com');
+  const port = Number(getEnv(env, 'SMTP_PORT', '465'));
+  const security = (getEnv(env, 'SMTP_SECURITY', port === 465 ? 'tls' : 'starttls')).toLowerCase();
+  const user = getEnv(env, 'SMTP_USER');
+  const password = cleanPassword(env.SMTP_PASSWORD || env.VITE_SMTP_PASSWORD);
+  const fromEmail = getEnv(env, 'SMTP_FROM_EMAIL', user);
+  const fromName = getEnv(env, 'SMTP_FROM_NAME', SYSTEM_SHORT_NAME);
 
   if (!user || !password || !fromEmail) {
     throw new Error('SMTP_USER, SMTP_PASSWORD, and SMTP_FROM_EMAIL must be configured on the server.');
@@ -46,15 +60,16 @@ const createTransport = (env: Environment) => {
 };
 
 export const getPublicSmtpConfig = (env: Environment) => {
-  const host = env.SMTP_HOST || 'smtp.gmail.com';
-  const port = Number(env.SMTP_PORT || 465);
-  const security = (env.SMTP_SECURITY || (port === 465 ? 'TLS' : 'STARTTLS')).toUpperCase();
-  const user = env.SMTP_USER?.trim() || '';
-  const fromEmail = env.SMTP_FROM_EMAIL?.trim() || user;
-  const fromName = env.SMTP_FROM_NAME?.trim() || SYSTEM_SHORT_NAME;
+  const host = getEnv(env, 'SMTP_HOST', 'smtp.gmail.com');
+  const port = Number(getEnv(env, 'SMTP_PORT', '465'));
+  const security = (getEnv(env, 'SMTP_SECURITY', port === 465 ? 'TLS' : 'STARTTLS')).toUpperCase();
+  const user = getEnv(env, 'SMTP_USER');
+  const password = cleanPassword(env.SMTP_PASSWORD || env.VITE_SMTP_PASSWORD);
+  const fromEmail = getEnv(env, 'SMTP_FROM_EMAIL', user);
+  const fromName = getEnv(env, 'SMTP_FROM_NAME', SYSTEM_SHORT_NAME);
 
   return {
-    configured: Boolean(user && env.SMTP_PASSWORD && fromEmail),
+    configured: Boolean(user && password && fromEmail),
     host,
     port,
     security,
