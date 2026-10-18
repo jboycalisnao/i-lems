@@ -2,31 +2,43 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * DATABASE CONFIGURATION
- * These strings are hardcoded to avoid environment variable issues.
- * IMPORTANT: Replace these with your actual Supabase Project URL and Anon Key.
+ * Loads credentials dynamically from environment variables (.env / .env.local).
+ * In Vite, client-accessible variables are prefixed with VITE_.
  */
-const URL = 'https://ewwadohdfmqfbdqndrhr.supabase.co'; // Must be a valid https:// URL
-const KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV3d2Fkb2hkZm1xZmJkcW5kcmhyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3NTg2MDQsImV4cCI6MjA4MDMzNDYwNH0.KU2yNQ_s8DSW3Urt39cJXzCoh02p4fynBzP8Li6x8dw';
+const rawUrl = import.meta.env.VITE_SUPABASE_URL || (import.meta.env as Record<string, string>).SUPABASE_URL || '';
+const rawKey = import.meta.env.VITE_SUPABASE_ANON_KEY || (import.meta.env as Record<string, string>).SUPABASE_ANON_KEY || '';
+
+const URL = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+const KEY = typeof rawKey === 'string' ? rawKey.trim() : '';
 
 let client: SupabaseClient;
 
 // Verification for developer setup
-const isPlaceholder = URL.includes('your-project-id') || KEY.includes('your-anon-key');
+const isConfigured = Boolean(
+  URL &&
+  KEY &&
+  !URL.includes('your-project-id') &&
+  !KEY.includes('your-anon-key') &&
+  URL.startsWith('http')
+);
 
-if (isPlaceholder) {
+if (!isConfigured) {
   console.warn(
-    "SCIENCE LABORATORY CONFIGURATION NOTICE:\n" +
-    "Supabase credentials are using placeholders in supabaseClient.ts.\n" +
-    "Laboratory records will remain unavailable until valid credentials are provided."
+    "I-LEMS DATABASE CONFIGURATION NOTICE:\n" +
+    "Supabase credentials are not configured or are using placeholders in .env / .env.local.\n" +
+    "Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable database synchronization."
   );
 }
 
 try {
-  // Initialize with a valid-format URL to prevent SDK initialization crash
-  client = createClient(URL, KEY);
+  if (isConfigured) {
+    client = createClient(URL, KEY);
+  } else {
+    // Safe placeholder initialization to prevent crash on startup when credentials are unset
+    client = createClient('https://placeholder.supabase.co', 'placeholder-anon-key');
+  }
 } catch (e) {
   console.error("Supabase Client Initialization Error:", e);
-  // Fallback empty client to prevent property access errors
   client = {} as any;
 }
 
@@ -37,7 +49,7 @@ export const supabase = client;
  * This is used by the App to decide whether to show the Dashboard or the Error screen.
  */
 export const checkConnection = async (): Promise<boolean> => {
-  if (isPlaceholder || !URL || !KEY) {
+  if (!isConfigured || !URL || !KEY) {
     return false;
   }
   

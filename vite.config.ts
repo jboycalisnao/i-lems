@@ -44,6 +44,11 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), smtpDevelopmentApi(env)],
     cacheDir: join(tmpdir(), 'ilems-vite-cache'),
+    envPrefix: ['VITE_', 'SUPABASE_'],
+    define: {
+      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(env.VITE_SUPABASE_URL || env.SUPABASE_URL || ''),
+      'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(env.VITE_SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY || '')
+    },
     server: {
       host: '0.0.0.0',
       port: 3000

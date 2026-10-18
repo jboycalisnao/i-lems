@@ -136,3 +136,49 @@ export interface BorrowRequest {
   reservationSlot?: string; // Time slot
   reservationDate?: string; // Date of reservation
 }
+
+// --- Property Management Types ---
+
+export type PropertyCondition = 'Serviceable' | 'Needs Repair' | 'Unserviceable' | 'For Condemnation' | 'Disposed';
+
+export type PropertyInventoryType = 'Semi-Expendable' | 'Capital Outlay' | 'Donated';
+
+export interface PropertyItem {
+  id: string;
+  propertyNumber: string; // e.g. "PROP-2026-001" or "LNHS-DCP-042"
+  name: string; // e.g. "Acer TravelMate Laptop 14-inch"
+  category: string; // e.g. "IT & Digital Equipment", "School Furniture", "Audio-Visual", "Appliances & HVAC", etc.
+  description: string; // Specs, model, brand, color
+  serialNumber?: string;
+  quantity: number;
+  unit: string; // "unit", "set", "pc", "lot"
+  unitValue: number; // Cost in ₱
+  totalValue: number; // unitValue * quantity
+  location: string; // Room / building / office
+  custodian: string; // Accountable teacher or staff officer
+  condition: PropertyCondition;
+  acquisitionDate: string; // YYYY-MM-DD
+  sourceOfFund: string; // "School MOOE", "DepEd DCP", "PTA Donation", "SEF / LGU", "GAA"
+  inventoryType: PropertyInventoryType;
+  parNumber?: string; // PAR / ICS Reference No.
+  notes?: string;
+  lastInspected?: string;
+  shortId?: string; // For barcode tag
+  pisCode?: string; // Property Inventory Sticker Code (e.g. PIS-26-04928)
+}
+
+export interface PropertyStats {
+  totalAssets: number;
+  totalQuantity: number;
+  totalValuation: number;
+  serviceableCount: number;
+  repairCount: number;
+  unserviceableCount: number;
+  condemnedCount: number;
+  capitalOutlayCount: number;
+  semiExpendableCount: number;
+  valueByCategory: { name: string; value: number }[];
+  countByCondition: { name: string; value: number }[];
+  valueByFundSource: { name: string; value: number }[];
+}
+

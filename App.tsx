@@ -17,17 +17,19 @@ import Settings from './components/Settings';
 import Login from './components/Login';
 import Scanner from './components/Scanner';
 import RequestsList from './components/RequestsList';
+import PropertyManagement from './components/PropertyManagement';
 import ConfirmModal from './components/ConfirmModal';
 import AppFooter from './components/AppFooter';
 import { getUserStatusUpdateTemplate } from './services/emailTemplates';
-import { LayoutDashboard, List, Plus, FlaskConical, HandPlatter, Settings as SettingsIcon, LogOut, ScanLine, Inbox, RefreshCw, AlertCircle } from 'lucide-react';
+import { LayoutDashboard, List, Plus, FlaskConical, HandPlatter, Settings as SettingsIcon, LogOut, ScanLine, Inbox, RefreshCw, AlertCircle, Building2 } from 'lucide-react';
 import { HEAD_TITLE, SYSTEM_FULL_NAME, SYSTEM_NAME, SYSTEM_SHORT_NAME } from './branding';
 
-type AppView = 'dashboard' | 'inventory' | 'lending' | 'scanner' | 'settings' | 'requests';
+type AppView = 'dashboard' | 'inventory' | 'property' | 'lending' | 'scanner' | 'settings' | 'requests';
 
 const viewPaths: Record<AppView, string> = {
   dashboard: '/dashboard',
   inventory: '/inventory/list',
+  property: '/property/list',
   requests: '/requests',
   scanner: '/scanner/search',
   lending: '/lending/by-item',
@@ -37,13 +39,14 @@ const viewPaths: Record<AppView, string> = {
 const mobileNavigation = [
   { view: 'dashboard' as AppView, label: 'Home', icon: LayoutDashboard },
   { view: 'inventory' as AppView, label: 'Inventory', icon: List },
+  { view: 'property' as AppView, label: 'Property', icon: Building2 },
   { view: 'requests' as AppView, label: 'Requests', icon: Inbox },
   { view: 'scanner' as AppView, label: 'Scanner', icon: ScanLine },
   { view: 'lending' as AppView, label: 'Lending', icon: HandPlatter },
   { view: 'settings' as AppView, label: 'Settings', icon: SettingsIcon }
 ];
 
-const appViews = new Set<AppView>(['dashboard', 'inventory', 'requests', 'scanner', 'lending', 'settings']);
+const appViews = new Set<AppView>(['dashboard', 'inventory', 'property', 'requests', 'scanner', 'lending', 'settings']);
 
 const App: React.FC = () => {
   const location = useLocation();
@@ -372,6 +375,7 @@ const App: React.FC = () => {
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
           <button onClick={() => setView('dashboard')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'dashboard' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><LayoutDashboard className="w-5 h-5" /><span>Dashboard</span></button>
           <button onClick={() => setView('inventory')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'inventory' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><List className="w-5 h-5" /><span>Inventory</span></button>
+          <button onClick={() => setView('property')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'property' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><Building2 className="w-5 h-5" /><span>Property Mgmt</span></button>
           <button onClick={() => setView('requests')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'requests' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><Inbox className="w-5 h-5" /><span>Requests</span></button>
           <button onClick={() => setView('scanner')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'scanner' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><ScanLine className="w-5 h-5" /><span>Scanner</span></button>
           <button onClick={() => setView('lending')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'lending' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><HandPlatter className="w-5 h-5" /><span>Lending</span></button>
@@ -399,8 +403,12 @@ const App: React.FC = () => {
             <div className="bg-white border-b border-gray-200 px-4 py-4 md:px-8 md:py-6 mb-4 md:mb-6 sticky top-0 z-10 shadow-sm">
                 <div className="max-w-7xl mx-auto flex justify-between items-center">
                     <div>
-                        <h2 className="text-xl md:text-2xl font-bold text-gray-900 uppercase">{view}</h2>
-                        <p className="text-gray-500 text-xs font-medium uppercase">Laboratory Records</p>
+                        <h2 className="text-xl md:text-2xl font-bold text-gray-900 uppercase">
+                          {view === 'property' ? 'Property Management' : view}
+                        </h2>
+                        <p className="text-gray-500 text-xs font-medium uppercase">
+                          {view === 'property' ? 'School Property & Plant Assets' : 'Laboratory Records'}
+                        </p>
                     </div>
                     {view === 'inventory' && (
                         <button onClick={() => setIsFormOpen(true)} className="flex items-center space-x-2 bg-blue-600 text-white px-3 md:px-5 py-2.5 rounded-md font-bold shadow-md transition-colors hover:bg-blue-700"><Plus className="w-5 h-5" /><span className="hidden sm:inline">Add Equipment</span><span className="sm:hidden">Add</span></button>
@@ -413,6 +421,7 @@ const App: React.FC = () => {
                     <Routes>
                         <Route path="/dashboard" element={<Dashboard items={items} borrowRecords={borrowRecords} />} />
                         <Route path="/inventory/*" element={<InventoryList items={items} categories={categories} onEdit={(item) => { setEditingItem(item); setIsFormOpen(true); }} onDelete={handleDelete} onShowQR={setQrItem} onPrintBarcodes={setBarcodeItem} />} />
+                        <Route path="/property/*" element={<PropertyManagement onRefreshParent={() => refreshData(true)} />} />
                         <Route path="/requests" element={<RequestsList onRefresh={() => refreshData(true)} />} />
                         <Route path="/scanner/*" element={<Scanner items={items} borrowRecords={borrowRecords} onBorrow={openBorrowModal} onReturn={initiateReturn} />} />
                         <Route path="/lending/*" element={<LendingList records={borrowRecords} requests={requests} onReturn={initiateReturn} onReturnBulk={() => {}} onDelete={handleDeleteRecord} onDeleteBulk={handleDeleteRecordsBulk} />} />
@@ -426,7 +435,7 @@ const App: React.FC = () => {
 
         <nav
           aria-label="Primary navigation"
-          className="md:hidden fixed inset-x-0 bottom-0 z-40 grid grid-cols-6 border-t border-gray-200 bg-white/95 backdrop-blur-md shadow-[0_-4px_12px_rgba(0,0,0,0.08)]"
+          className="md:hidden fixed inset-x-0 bottom-0 z-40 grid grid-cols-7 border-t border-gray-200 bg-white/95 backdrop-blur-md shadow-[0_-4px_12px_rgba(0,0,0,0.08)]"
           style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
         >
           {mobileNavigation.map(({ view: navView, label, icon: Icon }) => {

@@ -1,14 +1,16 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { FlaskConical, Lock, User, AlertCircle, Eye, EyeOff, Mail, ArrowRight, ArrowLeft, KeyRound, Loader2, Send, ShoppingBag, Search, QrCode, MapPin, Activity, Box, Tag } from 'lucide-react';
-import { AppSettings, BorrowRequest, InventoryItem } from '../types';
+import { FlaskConical, Lock, User, AlertCircle, Eye, EyeOff, Mail, ArrowRight, ArrowLeft, KeyRound, Loader2, Send, ShoppingBag, Search, QrCode, MapPin, Activity, Box, Tag, Building2, ShieldCheck, Barcode, CheckCircle2 } from 'lucide-react';
+import { AppSettings, BorrowRequest, InventoryItem, PropertyItem } from '../types';
 import * as storage from '../services/storageService';
+import * as propertyStorage from '../services/propertyStorageService';
 import * as notifications from '../services/notificationService';
 import { getPasswordResetTemplate } from '../services/emailTemplates';
 import PublicRequestModal from './PublicRequestModal';
 import { getCategoryColor, getCategoryIcon } from '../constants';
 import { SYSTEM_NAME, SYSTEM_SUBTITLE } from '../branding';
+import { LEON_NHS_SEAL_DATA_URI } from '../services/schoolSeal';
 import AppFooter from './AppFooter';
 
 interface LoginProps {
@@ -43,7 +45,7 @@ const Login: React.FC<LoginProps> = ({
 }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const [viewMode, setViewMode] = useState<'landing' | 'admin' | 'reset' | 'item_view' | 'request_lookup'>(
+  const [viewMode, setViewMode] = useState<'landing' | 'admin' | 'reset' | 'item_view' | 'request_lookup' | 'property_view'>(
       location.pathname === '/request-status' ? 'request_lookup' : 'landing'
   );
 
@@ -60,6 +62,10 @@ const Login: React.FC<LoginProps> = ({
   const [publicItem, setPublicItem] = useState<InventoryItem | null>(null);
   const [isItemLoading, setIsItemLoading] = useState(false);
 
+  const [publicProperty, setPublicProperty] = useState<PropertyItem | null>(null);
+  const [publicPisCode, setPublicPisCode] = useState<string>('');
+  const [isPropertyLoading, setIsPropertyLoading] = useState(false);
+
   const [resetStep, setResetStep] = useState<1 | 2 | 3>(1);
   const [inputEmail, setInputEmail] = useState('');
   const [inputOtp, setInputOtp] = useState('');
@@ -74,8 +80,12 @@ const Login: React.FC<LoginProps> = ({
     const params = new URLSearchParams(window.location.search);
     const ref = params.get('ref');
     const viewItem = params.get('view_item');
+    const viewPis = params.get('view_pis');
 
-    if (viewItem) {
+    if (viewPis) {
+        setViewMode('property_view');
+        loadPublicProperty(viewPis);
+    } else if (viewItem) {
         setViewMode('item_view');
         loadPublicItem(viewItem);
     } else if (ref) {
@@ -89,9 +99,14 @@ const Login: React.FC<LoginProps> = ({
   }, []);
 
   useEffect(() => {
+      const searchParams = new URLSearchParams(location.search);
       if (location.pathname === '/request-status') {
           setViewMode('request_lookup');
-      } else if (!new URLSearchParams(location.search).get('view_item')) {
+      } else if (searchParams.get('view_pis')) {
+          setViewMode('property_view');
+      } else if (searchParams.get('view_item')) {
+          setViewMode('item_view');
+      } else {
           setViewMode('landing');
       }
   }, [location.pathname, location.search]);
@@ -101,6 +116,21 @@ const Login: React.FC<LoginProps> = ({
       const item = await storage.getInventoryItem(id);
       setPublicItem(item);
       setIsItemLoading(false);
+  };
+
+  const loadPublicProperty = async (pisCode: string) => {
+      setIsPropertyLoading(true);
+      setPublicPisCode(pisCode);
+      try {
+          const items = await propertyStorage.getPropertyItems();
+          const prop = propertyStorage.getPropertyByPIS(items, pisCode);
+          setPublicProperty(prop || null);
+      } catch (e) {
+          console.error('Error loading property for public view:', e);
+          setPublicProperty(null);
+      } finally {
+          setIsPropertyLoading(false);
+      }
   };
 
   const handleLogin = (e: React.FormEvent) => {
@@ -430,6 +460,167 @@ const Login: React.FC<LoginProps> = ({
                             </div>
                             <h3 className="text-xl font-bold text-gray-800">Item Not Found</h3>
                             <p className="text-gray-500 mt-2">The requested equipment could not be found or has been removed.</p>
+                        </div>
+                    )}
+                 </div>
+            </div>
+        )}
+
+        {viewMode === 'property_view' && (
+            <div className="flex-1 flex flex-col p-6 sm:p-8 md:p-10 animate-in fade-in zoom-in duration-300">
+                 <div className="w-full max-w-2xl mx-auto flex-1 flex flex-col">
+                    <button 
+                        onClick={() => { setViewMode('landing'); window.history.replaceState({}, '', window.location.pathname); }} 
+                        className="text-gray-500 hover:text-gray-800 flex items-center gap-2 text-sm transition-colors mb-4 w-fit font-medium"
+                    >
+                        <ArrowLeft className="w-4 h-4" /> Back to Portal
+                    </button>
+
+                    {isPropertyLoading ? (
+                        <div className="flex-1 flex flex-col items-center justify-center py-16">
+                            <Loader2 className="w-12 h-12 text-[#b59a00] animate-spin mb-4" />
+                            <p className="text-gray-600 font-medium">Verifying School Property Record...</p>
+                        </div>
+                    ) : publicProperty ? (
+                        <div className="space-y-6">
+                            {/* Realistic PIS Header Banner resembling the physical yellow sticker */}
+                            <div className="bg-[#FFF000] border-2 border-black rounded-md p-4 sm:p-5 text-black shadow-md relative overflow-hidden">
+                                <div className="flex items-center gap-3 border-b-2 border-black pb-3">
+                                    <img
+                                        src={LEON_NHS_SEAL_DATA_URI}
+                                        alt="Leon NHS Seal"
+                                        className="w-12 h-12 flex-shrink-0 object-contain"
+                                    />
+                                    <div className="leading-tight flex-1 min-w-0">
+                                        <div className="text-base sm:text-lg font-black tracking-tight uppercase truncate">LEON NATIONAL HIGH SCHOOL</div>
+                                        <div className="text-xs sm:text-sm font-extrabold tracking-wide uppercase text-gray-900">SCIENCE DEPARTMENT</div>
+                                        <div className="text-xs sm:text-sm font-black tracking-normal uppercase mt-0.5">PROPERTY INVENTORY STICKER (PIS)</div>
+                                    </div>
+                                    <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-sm bg-black text-[#FFF000] text-xs font-black uppercase tracking-wider">
+                                        <ShieldCheck className="w-3.5 h-3.5" /> DepEd Verified
+                                    </span>
+                                </div>
+
+                                <div className="mt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 font-mono">
+                                    <div>
+                                        <span className="text-xs font-bold text-gray-800 uppercase block sm:inline mr-2">Property Code:</span>
+                                        <span className="text-base sm:text-lg font-extrabold tracking-wide text-black bg-white/70 px-2.5 py-0.5 rounded-sm border border-black/40">
+                                            {publicProperty.propertyNumber}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs font-bold text-gray-800 uppercase">PIS Tag:</span>
+                                        <span className="text-sm font-black text-black bg-yellow-200/90 px-2 py-0.5 rounded-sm border border-black/30">
+                                            {publicProperty.pisCode || publicPisCode}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Main Information Card */}
+                            <div className="bg-white border border-gray-200 rounded-md p-5 sm:p-6 shadow-sm space-y-5">
+                                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 border-b border-gray-100 pb-4">
+                                    <div>
+                                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                                            <span className="px-2.5 py-0.5 rounded-sm text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                                                {publicProperty.category}
+                                            </span>
+                                            <span className="px-2.5 py-0.5 rounded-sm text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200">
+                                                {publicProperty.inventoryType}
+                                            </span>
+                                        </div>
+                                        <h2 className="text-2xl font-black text-gray-900">{publicProperty.name}</h2>
+                                    </div>
+                                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-sm text-xs font-bold uppercase border whitespace-nowrap self-start ${
+                                        publicProperty.condition === 'Serviceable' 
+                                            ? 'bg-green-50 text-green-700 border-green-200'
+                                            : publicProperty.condition === 'Needs Repair'
+                                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                            : 'bg-red-50 text-red-700 border-red-200'
+                                    }`}>
+                                        <CheckCircle2 className="w-3.5 h-3.5" />
+                                        {publicProperty.condition}
+                                    </span>
+                                </div>
+
+                                {publicProperty.description && (
+                                    <div>
+                                        <h4 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">Description / Specifications</h4>
+                                        <p className="text-gray-700 text-sm leading-relaxed bg-gray-50 p-3.5 rounded-md border border-gray-100">
+                                            {publicProperty.description}
+                                        </p>
+                                    </div>
+                                )}
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                                    <div className="bg-gray-50/70 p-3.5 rounded-md border border-gray-100">
+                                        <div className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
+                                            <MapPin className="w-3.5 h-3.5 text-gray-400" /> Physical Location
+                                        </div>
+                                        <div className="font-semibold text-gray-800">{publicProperty.location}</div>
+                                    </div>
+
+                                    <div className="bg-gray-50/70 p-3.5 rounded-md border border-gray-100">
+                                        <div className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
+                                            <User className="w-3.5 h-3.5 text-gray-400" /> Accountable Custodian
+                                        </div>
+                                        <div className="font-semibold text-gray-800">{publicProperty.custodian}</div>
+                                    </div>
+
+                                    <div className="bg-gray-50/70 p-3.5 rounded-md border border-gray-100">
+                                        <div className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
+                                            <Tag className="w-3.5 h-3.5 text-gray-400" /> Serial / PAR Number
+                                        </div>
+                                        <div className="font-semibold text-gray-800 font-mono text-xs">
+                                            {publicProperty.serialNumber ? `SN: ${publicProperty.serialNumber}` : (publicProperty.parNumber || 'N/A')}
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-gray-50/70 p-3.5 rounded-md border border-gray-100">
+                                        <div className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
+                                            <Building2 className="w-3.5 h-3.5 text-gray-400" /> Fund Source
+                                        </div>
+                                        <div className="font-semibold text-gray-800">{publicProperty.sourceOfFund}</div>
+                                    </div>
+                                </div>
+
+                                <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-gray-100 text-xs text-gray-500">
+                                    <div>
+                                        Acquired: <strong className="text-gray-700">{publicProperty.acquisitionDate}</strong> &bull; Total: <strong className="text-gray-700">₱{(publicProperty.totalValue || publicProperty.quantity * publicProperty.unitValue).toLocaleString()}</strong>
+                                    </div>
+                                    <div className="text-red-600 font-extrabold tracking-wide uppercase flex items-center gap-1">
+                                        School Property &bull; DO NOT REMOVE!
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-white border border-gray-200 rounded-lg">
+                            <div className="w-16 h-16 rounded-full bg-yellow-50 border border-yellow-200 flex items-center justify-center mb-4 text-yellow-600">
+                                <Barcode className="w-8 h-8" />
+                            </div>
+                            <h3 className="text-xl font-bold text-gray-800">PIS Sticker Tag Generated</h3>
+                            <div className="mt-2 inline-block px-3 py-1 bg-yellow-100 border border-yellow-300 rounded font-mono font-bold text-sm text-yellow-900">
+                                {publicPisCode || 'UNASSIGNED PIS TAG'}
+                            </div>
+                            <p className="text-gray-600 mt-4 max-w-md text-sm leading-relaxed">
+                                This official Property Inventory Sticker (PIS) has been generated by Leon National High School Science Department. 
+                                However, physical property details have not yet been encoded or linked to this sticker code in the inventory ledger.
+                            </p>
+                            <div className="mt-6 flex flex-col sm:flex-row gap-3">
+                                <button
+                                    onClick={() => setViewMode('admin')}
+                                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded shadow transition-colors flex items-center justify-center gap-2"
+                                >
+                                    <Lock className="w-4 h-4" /> Lab Admin Sign In
+                                </button>
+                                <button
+                                    onClick={() => { setViewMode('landing'); window.history.replaceState({}, '', window.location.pathname); }}
+                                    className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium text-sm rounded transition-colors"
+                                >
+                                    Return to Portal
+                                </button>
+                            </div>
                         </div>
                     )}
                  </div>

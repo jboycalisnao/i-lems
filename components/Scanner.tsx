@@ -118,11 +118,13 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
 
   const parseScannedCode = (code: string) => {
       try {
-          // Check if it's a URL (e.g. from the QR Code Modal)
-          if (code.startsWith('http') || code.includes('view_item=')) {
+          // Check if it's a URL (e.g. from the QR Code Modal or PIS sticker)
+          if (code.startsWith('http') || code.includes('view_item=') || code.includes('view_pis=')) {
               const url = new URL(code);
               const viewItem = url.searchParams.get('view_item');
               if (viewItem) return viewItem;
+              const viewPis = url.searchParams.get('view_pis');
+              if (viewPis) return viewPis;
           }
       } catch (e) {
           // not a url, ignore

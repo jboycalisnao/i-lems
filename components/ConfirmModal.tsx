@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle } from 'lucide-react';
 import { Card } from './ui/Surface';
 
@@ -18,7 +19,7 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  return (
+  const modalContent = (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
       <Card className="shadow-2xl max-w-sm w-full overflow-hidden animate-in fade-in zoom-in duration-200 border-gray-100">
         <div className="p-6 text-center">
@@ -46,6 +47,10 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
       </Card>
     </div>
   );
+
+  return typeof document !== 'undefined'
+    ? createPortal(modalContent, document.body)
+    : modalContent;
 };
 
 export default ConfirmModal;
