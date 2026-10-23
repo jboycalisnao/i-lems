@@ -4,6 +4,7 @@ import JsBarcode from 'jsbarcode';
 import { PropertyItem } from '../types';
 import { generateNextPISCode, getHighestPISSequence, recordPISSequenceUsed } from '../services/propertyStorageService';
 import { LEON_NHS_SEAL_DATA_URI } from '../services/schoolSeal';
+import { DEPLOYED_URL } from '../branding';
 import { X, Printer, Sparkles, Layers, Sliders, CheckSquare, Grid, Eye } from 'lucide-react';
 
 interface PISBatchGeneratorModalProps {
@@ -109,7 +110,7 @@ export const PISBatchGeneratorModal: React.FC<PISBatchGeneratorModalProps> = ({
   // Generate blank physical sticker sheets with auto-incrementing barcodes & QR codes
   useEffect(() => {
     const list: StickerData[] = [];
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const deployedOrigin = DEPLOYED_URL;
     const totalStickers = Math.max(1, sheetCount) * stickersPerPage;
     let seqNum = autoStartingSequence;
 
@@ -120,7 +121,7 @@ export const PISBatchGeneratorModal: React.FC<PISBatchGeneratorModalProps> = ({
         pisCode: pis,
         propertyCode: '', // Blank underline for handwriting upon tagging!
         department: department,
-        qrUrl: `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`${origin}/?view_pis=${pis}`)}`
+        qrUrl: `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`${deployedOrigin}/?view_pis=${pis}`)}`
       });
     }
 
@@ -511,7 +512,7 @@ export const PISBatchGeneratorModal: React.FC<PISBatchGeneratorModalProps> = ({
   const totalPages = Math.ceil(previewStickers.length / stickersPerPage);
 
   const modalContent = (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 md:p-6 animate-in fade-in duration-200">
+    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
       <div className="bg-white rounded-md shadow-2xl max-w-5xl w-full overflow-hidden border border-gray-200 flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="px-6 py-4 bg-yellow-500 text-gray-950 flex justify-between items-center flex-shrink-0 border-b border-yellow-600">
@@ -751,8 +752,11 @@ export const PISBatchGeneratorModal: React.FC<PISBatchGeneratorModalProps> = ({
 
         {/* Modal Footer */}
         <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between flex-shrink-0">
-          <div className="text-xs text-gray-600">
-            Layout: <strong>{activeConfig.label} ({activeConfig.sublabel})</strong> • Total: <strong>{totalPages} Page{totalPages > 1 ? 's' : ''}</strong>
+          <div className="text-xs text-gray-600 flex items-center gap-2 flex-wrap">
+            <span>Layout: <strong>{activeConfig.label} ({activeConfig.sublabel})</strong> • Total: <strong>{totalPages} Page{totalPages > 1 ? 's' : ''}</strong></span>
+            <span className="text-[11px] font-mono text-blue-900 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+              QR Target: lab.leonnhs.edu.ph
+            </span>
           </div>
           <div className="flex space-x-3">
             <button

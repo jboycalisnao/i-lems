@@ -1,5 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AppSettings, Category, InventoryItem } from '../types';
 import * as storage from '../services/storageService';
@@ -8,10 +9,18 @@ import {
   Upload, Save, CheckCircle, Plus, Trash2, Edit2, X, Loader2, Type, Lock, 
   User, Eye, EyeOff, Mail, Server, FileCode, Key, Users, Send, 
   ExternalLink, Copy, Code, Zap, Clock, AlertTriangle, Link as LinkIcon, MailCheck, Database,
-  Search, Check, Tag, RefreshCw, AlertCircle, Layers, ArrowRight
+  Search, Check, Tag, RefreshCw, AlertCircle, Layers, ArrowRight, Cloud, HardDrive
 } from 'lucide-react';
 import { SYSTEM_SHORT_NAME } from '../branding';
 import { getCategoryColor, getCategoryIcon } from '../constants';
+import UserManagementSettings from './UserManagementSettings';
+import { 
+  getDDownloadAccountInfo, 
+  formatBytes, 
+  DDownloadAccountInfo, 
+  getStoredDDownloadApiKey, 
+  setStoredDDownloadApiKey 
+} from '../services/ddownloadService';
 
 interface SettingsProps {
   settings: AppSettings;
@@ -44,8 +53,8 @@ const Settings: React.FC<SettingsProps> = ({
   const location = useLocation();
   const navigate = useNavigate();
   const routeTab = location.pathname.split('/').filter(Boolean)[1];
-  const activeTab: 'general' | 'categories' | 'automation' =
-    routeTab === 'categories' || routeTab === 'automation' ? routeTab : 'general';
+  const activeTab: 'general' | 'categories' | 'automation' | 'users' =
+    routeTab === 'categories' || routeTab === 'automation' || routeTab === 'users' ? routeTab : 'general';
   const [formData, setFormData] = useState<AppSettings>(settings);
   const [saved, setSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -77,7 +86,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [categoryFeedback, setCategoryFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
-    if (routeTab !== 'general' && routeTab !== 'categories' && routeTab !== 'automation') {
+    if (routeTab !== 'general' && routeTab !== 'categories' && routeTab !== 'automation' && routeTab !== 'users') {
       navigate('/settings/general', { replace: true });
     }
   }, [navigate, routeTab]);
@@ -119,9 +128,70 @@ WITH CHECK (bucket_id = 'app-assets' AND name = 'branding/app-logo');
 
 -- 3. Existing table migrations
 ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS "labInCharge" TEXT;
-
 ALTER TABLE borrow_requests ADD COLUMN IF NOT EXISTS "instructorName" TEXT;
-ALTER TABLE borrow_records ADD COLUMN IF NOT EXISTS "borrowerEmail" TEXT;`;
+ALTER TABLE borrow_records ADD COLUMN IF NOT EXISTS "borrowerEmail" TEXT;
+
+-- 4. DDownload Cloud Storage Integration (https://ddownload.com/api)
+ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
+
+  // --- DDownload Cloud File Service State ---
+  const [ddownloadKey, setDdownloadKey] = useState<string>(settings.ddownloadApiKey || getStoredDDownloadApiKey() || '');
+  const [showDdownloadKey, setShowDdownloadKey] = useState<boolean>(false);
+  const [isTestingDDownload, setIsTestingDDownload] = useState<boolean>(false);
+  const [ddownloadAccount, setDdownloadAccount] = useState<DDownloadAccountInfo | null>(null);
+  const [ddownloadError, setDdownloadError] = useState<string | null>(null);
+  const [ddownloadSuccess, setDdownloadSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    const key = ddownloadKey.trim();
+    if (key && activeTab === 'automation') {
+      getDDownloadAccountInfo(key).then(res => {
+        if (res.success && res.data) {
+          setDdownloadAccount(res.data);
+        }
+      }).catch(() => {});
+    }
+  }, [activeTab]);
+
+  const handleDDownloadKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let raw = e.target.value.trim();
+    // Auto-extract token if full URL was pasted: e.g. https://api-v2.ddownload.com/api/account/info?key=507988y2akd8lwsiu54m5e
+    const match = raw.match(/[?&]key=([a-zA-Z0-9]+)/i);
+    const key = match && match[1] ? match[1] : raw;
+    setDdownloadKey(key);
+    setFormData(prev => ({ ...prev, ddownloadApiKey: key }));
+  };
+
+  const handleTestDDownload = async () => {
+    let raw = ddownloadKey.trim();
+    const match = raw.match(/[?&]key=([a-zA-Z0-9]+)/i);
+    const key = match && match[1] ? match[1] : raw;
+    setDdownloadKey(key);
+
+    if (!key) {
+      setDdownloadError('Please enter a DDownload API key first.');
+      return;
+    }
+    setIsTestingDDownload(true);
+    setDdownloadError(null);
+    setDdownloadSuccess(null);
+    try {
+      const res = await getDDownloadAccountInfo(key);
+      if (!res.success || !res.data) {
+        throw new Error(res.error || 'Failed to authenticate with DDownload');
+      }
+      setDdownloadAccount(res.data);
+      setDdownloadSuccess('DDownload API Key verified successfully! Account is active.');
+      setFormData(prev => ({ ...prev, ddownloadApiKey: key }));
+      setStoredDDownloadApiKey(key);
+    } catch (err: any) {
+      setDdownloadError(err.message || 'DDownload verification failed.');
+      setDdownloadAccount(null);
+    } finally {
+      setIsTestingDDownload(false);
+    }
+  };
 
   const loadSmtpConfig = async () => {
     try {
@@ -266,7 +336,7 @@ ALTER TABLE borrow_records ADD COLUMN IF NOT EXISTS "borrowerEmail" TEXT;`;
         const recipients = formData.notificationEmails.split(',')[0].trim();
         const sent = await notifications.sendEmail(formData, {
             to_email: recipients,
-            subject: `🧪 ${SYSTEM_SHORT_NAME} Connection Test`,
+            subject: `${SYSTEM_SHORT_NAME} Connection Test`,
             body: `This is a test email from your Laboratory Inventory System (${formData.appName}). If you are reading this, your Gmail Automation is successfully configured!`,
             html_body: `<div style="font-family: sans-serif; padding: 20px; border: 2px solid #2005A2; border-radius: 12px; text-align: center;">
                 <h2 style="color: #2005A2;">Connection Successful!</h2>
@@ -427,6 +497,9 @@ ALTER TABLE borrow_records ADD COLUMN IF NOT EXISTS "borrowerEmail" TEXT;`;
             <button onClick={() => navigate('/settings/categories')} className={`flex-shrink-0 px-4 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'categories' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>Categories</button>
             <button onClick={() => navigate('/settings/automation')} className={`flex-shrink-0 px-4 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'automation' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                 <div className="flex items-center gap-2"><Zap className="w-4 h-4" /> Automation</div>
+            </button>
+            <button onClick={() => navigate('/settings/users')} className={`flex-shrink-0 px-4 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'users' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                <div className="flex items-center gap-2"><Users className="w-4 h-4" /> Users & Roles (RBAC)</div>
             </button>
         </div>
 
@@ -824,6 +897,121 @@ ALTER TABLE borrow_records ADD COLUMN IF NOT EXISTS "borrowerEmail" TEXT;`;
                         </div>
                     </div>
 
+                    {/* DDownload Cloud Storage Integration */}
+                    <div className="bg-white border border-blue-200 rounded-xl p-6 shadow-sm space-y-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-blue-100 pb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="p-3 bg-blue-600 text-white rounded-xl shadow-md">
+                                    <Cloud className="w-6 h-6" />
+                                </div>
+                                <div>
+                                    <h4 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                                        DDownload Cloud File Service
+                                        <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                                            ddownloadAccount ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-gray-100 text-gray-600'
+                                        }`}>
+                                            {ddownloadAccount ? 'Connected' : 'External Host'}
+                                        </span>
+                                    </h4>
+                                    <p className="text-xs text-gray-500">
+                                        Cloud storage provider for equipment manuals, Material Safety Data Sheets (MSDS), calibration records, and spec sheets.
+                                    </p>
+                                </div>
+                            </div>
+                            <a
+                                href="https://ddownload.com/api"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg border border-blue-200 transition-colors self-start sm:self-center"
+                            >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                                DDownload API Docs
+                            </a>
+                        </div>
+
+                        {/* Status feedback */}
+                        {ddownloadError && (
+                            <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg text-xs font-semibold flex items-center gap-2">
+                                <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                                <span>{ddownloadError}</span>
+                            </div>
+                        )}
+                        {ddownloadSuccess && (
+                            <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-xs font-semibold flex items-center gap-2">
+                                <CheckCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                                <span>{ddownloadSuccess}</span>
+                            </div>
+                        )}
+
+                        {/* API Key Input */}
+                        <div className="space-y-2">
+                            <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
+                                DDownload API Key
+                            </label>
+                            <div className="relative">
+                                <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                <input
+                                    type={showDdownloadKey ? 'text' : 'password'}
+                                    value={ddownloadKey}
+                                    onChange={handleDDownloadKeyChange}
+                                    placeholder="Enter your DDownload API key"
+                                    className="w-full pl-10 pr-24 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                                />
+                                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowDdownloadKey(!showDdownloadKey)}
+                                        className="p-1.5 text-gray-400 hover:text-gray-600 rounded"
+                                    >
+                                        {showDdownloadKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                    </button>
+                                </div>
+                            </div>
+                            <p className="text-[11px] text-gray-500 leading-relaxed">
+                                Enter your DDownload API key (e.g. <span className="font-mono text-gray-700 font-bold">507988y2akd8lwsiu54m5e</span>). If you copy the full URL from the DDownload dashboard, the key is automatically extracted for you.
+                                <br />
+                                <span className="text-blue-600 font-semibold">Tip:</span> If DDownload responds with <span className="font-mono text-red-600 font-bold">Wrong auth</span>, click the blue <span className="font-semibold text-gray-800">"Regenerate Key"</span> button on your DDownload dashboard and ensure your account email is confirmed.
+                            </p>
+                        </div>
+
+                        {/* Live Account Stats if connected */}
+                        {ddownloadAccount && (
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 bg-gradient-to-r from-blue-50 via-sky-50 to-indigo-50 border border-blue-200 rounded-xl">
+                                <div>
+                                    <span className="block text-[11px] font-bold text-blue-700 uppercase">Account Email</span>
+                                    <span className="text-sm font-semibold text-gray-900 truncate block" title={ddownloadAccount.email}>
+                                        {ddownloadAccount.email || 'Active DDownload Account'}
+                                    </span>
+                                </div>
+                                <div>
+                                    <span className="block text-[11px] font-bold text-blue-700 uppercase">Storage Quota</span>
+                                    <span className="text-sm font-bold text-gray-900">
+                                        {formatBytes(ddownloadAccount.storage_used)} used
+                                        <span className="text-xs font-normal text-gray-500"> ({formatBytes(ddownloadAccount.storage_left)} left)</span>
+                                    </span>
+                                </div>
+                                <div>
+                                    <span className="block text-[11px] font-bold text-blue-700 uppercase">Account Status</span>
+                                    <span className="text-sm font-bold text-gray-900">
+                                        {ddownloadAccount.prem_until ? `Premium (${ddownloadAccount.prem_until.split(' ')[0]})` : `${formatBytes(ddownloadAccount.traffic_left)} traffic left`}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex flex-col sm:flex-row gap-2">
+                            <button
+                                type="button"
+                                onClick={handleTestDDownload}
+                                disabled={isTestingDDownload || !ddownloadKey.trim()}
+                                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-sm"
+                            >
+                                {isTestingDDownload ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cloud className="w-4 h-4" />}
+                                Verify DDownload Connection
+                            </button>
+                        </div>
+                    </div>
+
                     <div className="pt-6 border-t flex justify-between items-center">
                          <div className="flex items-center gap-3">
                             <div className="p-3 bg-green-100 text-green-700 rounded-md shadow-inner">
@@ -843,9 +1031,13 @@ ALTER TABLE borrow_records ADD COLUMN IF NOT EXISTS "borrowerEmail" TEXT;`;
             </div>
         )}
 
+        {activeTab === 'users' && (
+            <UserManagementSettings onUsersChange={onCategoriesChange} />
+        )}
+
         {/* Delete & Reassign Category Modal */}
-        {categoryToDelete && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+        {categoryToDelete && typeof document !== 'undefined' && createPortal(
+            <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] flex items-center justify-center p-3 md:p-6 overflow-y-auto bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
                 <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 border border-gray-100 animate-in zoom-in-95 duration-200 space-y-4">
                     <div className="flex items-start gap-4">
                         <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0">
@@ -920,7 +1112,8 @@ ALTER TABLE borrow_records ADD COLUMN IF NOT EXISTS "borrowerEmail" TEXT;`;
                         </button>
                     </div>
                 </div>
-            </div>
+            </div>,
+            document.body
         )}
     </div>
   );

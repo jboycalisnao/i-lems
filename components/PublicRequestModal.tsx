@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { InventoryItem, BorrowRequest, RequestItem } from '../types';
 import * as storage from '../services/storageService';
 import { notifyAdminsOfNewRequest, notifyBorrowerOfRequestCopy } from '../services/notificationService';
@@ -217,8 +218,8 @@ const PublicRequestModal: React.FC<PublicRequestModalProps> = ({ onClose }) => {
       }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+  const modalContent = (
+    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
       <div className="bg-white/95 backdrop-blur-2xl rounded-md shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col border border-gray-200 overflow-hidden relative">
         <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 z-10 p-2"><X className="w-6 h-6" /></button>
 
@@ -469,6 +470,10 @@ const PublicRequestModal: React.FC<PublicRequestModalProps> = ({ onClose }) => {
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined'
+    ? createPortal(modalContent, document.body)
+    : modalContent;
 };
 
 export default PublicRequestModal;

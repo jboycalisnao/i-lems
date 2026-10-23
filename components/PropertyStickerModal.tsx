@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import JsBarcode from 'jsbarcode';
 import { PropertyItem } from '../types';
 import { LEON_NHS_SEAL_DATA_URI } from '../services/schoolSeal';
+import { DEPLOYED_URL } from '../branding';
 import { X, Printer, Tag, ShieldCheck, Copy, Check, Grid, Cable } from 'lucide-react';
 
 interface PropertyStickerModalProps {
@@ -19,8 +20,8 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
   const [department, setDepartment] = useState('SCIENCE DEPARTMENT');
 
   const pisCode = item.pisCode || `PIS-26-${item.propertyNumber.replace(/[^0-9]/g, '').slice(-5).padStart(5, '0')}`;
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`${origin}/?view_pis=${pisCode}`)}`;
+  const deployedOrigin = DEPLOYED_URL;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`${deployedOrigin}/?view_pis=${pisCode}`)}`;
 
   useEffect(() => {
     if (barcodeRef.current) {
@@ -313,7 +314,7 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
       <div className="bg-white rounded-md shadow-2xl max-w-lg w-full overflow-hidden border border-gray-200 flex flex-col max-h-[90vh]">
         {/* Modal Header */}
         <div className="px-6 py-4 bg-yellow-500 text-gray-950 flex justify-between items-center flex-shrink-0 border-b border-yellow-600">
@@ -410,6 +411,10 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
             <div className="flex items-center justify-between text-gray-600">
               <span>Accountable Custodian:</span>
               <span className="font-bold text-gray-900">{item.custodian}</span>
+            </div>
+            <div className="flex items-center justify-between text-gray-600 pt-1 border-t border-amber-200/60">
+              <span>Public Scan URL:</span>
+              <span className="font-mono text-[11px] font-bold text-blue-900">{deployedOrigin}/?view_pis={pisCode}</span>
             </div>
           </div>
 

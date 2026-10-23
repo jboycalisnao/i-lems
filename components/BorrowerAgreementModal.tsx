@@ -1,5 +1,6 @@
 
 import React, { useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { BorrowRequest } from '../types';
 import { X, Printer, FileText, CheckCircle2, ShieldCheck, AlertCircle, QrCode } from 'lucide-react';
 import { SYSTEM_NAME } from '../branding';
@@ -270,8 +271,8 @@ const BorrowerAgreementModal: React.FC<BorrowerAgreementModalProps> = ({ request
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
+  const modalContent = (
+    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
       <div className="bg-white rounded-md shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in duration-300 border border-gray-200">
         
         {/* Modal Header */}
@@ -417,6 +418,10 @@ const BorrowerAgreementModal: React.FC<BorrowerAgreementModalProps> = ({ request
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined'
+    ? createPortal(modalContent, document.body)
+    : modalContent;
 };
 
 export default BorrowerAgreementModal;

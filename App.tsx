@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { InventoryItem, BorrowRecord, AppSettings, Category, BorrowRequest } from './types';
+import { InventoryItem, BorrowRecord, AppSettings, Category, BorrowRequest, AppUser, ROLE_DEFINITIONS } from './types';
 import * as storage from './services/storageService';
 import * as sync from './services/syncService';
 import * as notifications from './services/notificationService';
+import * as userService from './services/userService';
 import { supabase, checkConnection } from './supabaseClient';
 import Dashboard from './components/Dashboard';
 import InventoryList from './components/InventoryList';
@@ -38,7 +39,7 @@ const viewPaths: Record<AppView, string> = {
 
 const mobileNavigation = [
   { view: 'dashboard' as AppView, label: 'Home', icon: LayoutDashboard },
-  { view: 'inventory' as AppView, label: 'Inventory', icon: List },
+  { view: 'inventory' as AppView, label: 'Lab Inv', icon: FlaskConical },
   { view: 'property' as AppView, label: 'Property', icon: Building2 },
   { view: 'requests' as AppView, label: 'Requests', icon: Inbox },
   { view: 'scanner' as AppView, label: 'Scanner', icon: ScanLine },
@@ -56,17 +57,18 @@ const App: React.FC = () => {
   const setView = (nextView: AppView) => navigate(viewPaths[nextView]);
 
   const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('scilab_auth') === 'true');
-  const [isLoading, setIsLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(() => userService.getCurrentUser());
+  const [isLoading, setIsLoading] = useState(() => storage.getCachedItems().length === 0);
   const [isDbConnected, setIsDbConnected] = useState<boolean | null>(null);
   
-  const [isFirstLoad, setIsFirstLoad] = useState(true);
+  const [isFirstLoad, setIsFirstLoad] = useState(() => storage.getCachedItems().length === 0);
   const [lastSynced, setLastSynced] = useState<Date>(new Date());
 
-  const [items, setItems] = useState<InventoryItem[]>([]);
-  const [borrowRecords, setBorrowRecords] = useState<BorrowRecord[]>([]);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [requests, setRequests] = useState<BorrowRequest[]>([]);
+  const [items, setItems] = useState<InventoryItem[]>(() => storage.getCachedItems());
+  const [borrowRecords, setBorrowRecords] = useState<BorrowRecord[]>(() => storage.getCachedBorrowRecords());
+  const [settings, setSettings] = useState<AppSettings | null>(() => storage.getCachedSettings());
+  const [categories, setCategories] = useState<Category[]>(() => storage.getCachedCategories());
+  const [requests, setRequests] = useState<BorrowRequest[]>(() => storage.getCachedBorrowRequests());
   
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | undefined>(undefined);
@@ -81,8 +83,9 @@ const App: React.FC = () => {
     isOpen: boolean; title: string; message: string; onConfirm: () => void; isDestructive: boolean;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => {}, isDestructive: false });
 
-  const refreshData = useCallback(async (silent = false) => {
-      if (!silent) setIsLoading(true);
+  const refreshData = useCallback(async (silent = false, forceRefresh = false) => {
+      const hasCachedItems = storage.getCachedItems().length > 0;
+      if (!silent && !hasCachedItems) setIsLoading(true);
       try {
           const connected = await checkConnection();
           setIsDbConnected(connected);
@@ -93,13 +96,13 @@ const App: React.FC = () => {
               return false;
           }
 
-          const loadedSettings = await storage.getSettings();
+          const loadedSettings = await storage.getSettings(forceRefresh);
           setSettings(loadedSettings);
 
           const [inventorySnapshot, loadedCats, loadedRequests] = await Promise.all([
-              storage.getInventorySnapshot(),
-              storage.getCategories(),
-              storage.getBorrowRequests()
+              storage.getInventorySnapshot(forceRefresh),
+              storage.getCategories(forceRefresh),
+              storage.getBorrowRequests(forceRefresh)
           ]);
           const { items: loadedItems, borrowRecords: loadedRecords } = inventorySnapshot;
           
@@ -113,37 +116,37 @@ const App: React.FC = () => {
       } catch (e: any) {
           console.error("Data loading failed", e);
           setIsDbConnected(false);
-          if (!silent) setIsLoading(false);
           return false;
       } finally {
-          if (!silent) setIsLoading(false);
+          setIsLoading(false);
       }
   }, []);
 
   useEffect(() => {
-    refreshData(false)
+    const hasCache = storage.getCachedItems().length > 0;
+    refreshData(hasCache, !hasCache)
       .then((success) => {
         if (success) {
             sync.performMaintenanceSync();
         }
-        setTimeout(() => setIsFirstLoad(false), 800);
+        setIsFirstLoad(false);
       });
 
     // Subscriptions only if database is present
     let channels: any[] = [];
     if (isDbConnected) {
         channels = [
-            supabase.channel('public:inventory_items').on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_items' }, () => refreshData(true).catch(() => {})).subscribe(),
-            supabase.channel('public:borrow_records').on('postgres_changes', { event: '*', schema: 'public', table: 'borrow_records' }, () => refreshData(true).catch(() => {})).subscribe(),
-            supabase.channel('public:app_settings').on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, () => refreshData(true).catch(() => {})).subscribe(),
-            supabase.channel('public:categories').on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => refreshData(true).catch(() => {})).subscribe(),
-            supabase.channel('public:borrow_requests').on('postgres_changes', { event: '*', schema: 'public', table: 'borrow_requests' }, () => refreshData(true).catch(() => {})).subscribe(),
+            supabase.channel('public:inventory_items').on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_items' }, () => refreshData(true, true).catch(() => {})).subscribe(),
+            supabase.channel('public:borrow_records').on('postgres_changes', { event: '*', schema: 'public', table: 'borrow_records' }, () => refreshData(true, true).catch(() => {})).subscribe(),
+            supabase.channel('public:app_settings').on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, () => refreshData(true, true).catch(() => {})).subscribe(),
+            supabase.channel('public:categories').on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => refreshData(true, true).catch(() => {})).subscribe(),
+            supabase.channel('public:borrow_requests').on('postgres_changes', { event: '*', schema: 'public', table: 'borrow_requests' }, () => refreshData(true, true).catch(() => {})).subscribe(),
         ];
     }
 
     const cleanupRefresh = sync.setupAutoRefresh(() => {
         if (isDbConnected) {
-            refreshData(true).then((success) => {
+            refreshData(true, false).then((success) => {
                 if (success) sync.performMaintenanceSync();
             }).catch(() => {});
         }
@@ -227,9 +230,13 @@ const App: React.FC = () => {
       setIsBorrowModalOpen(true);
   };
 
-  const handleLogin = (status: boolean) => {
+  const handleLogin = (status: boolean, user?: AppUser) => {
       if (status) {
           localStorage.setItem('scilab_auth', 'true');
+          if (user) {
+              setCurrentUser(user);
+              userService.setCurrentUser(user);
+          }
           setIsAuthenticated(true);
           navigate('/dashboard', { replace: true });
       }
@@ -237,6 +244,8 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
       localStorage.removeItem('scilab_auth');
+      userService.setCurrentUser(null);
+      setCurrentUser(null);
       setIsAuthenticated(false);
       navigate('/', { replace: true });
   };
@@ -372,14 +381,48 @@ const App: React.FC = () => {
     <div className="flex h-[100dvh] text-gray-800 bg-transparent">
       <aside className="w-64 bg-white border-r border-gray-200 hidden md:flex flex-col h-full shadow-xl z-20">
         <div className="p-6 border-b border-gray-100 flex-shrink-0"><AppBrand /></div>
+
+        {/* Current Logged-in User Profile Card */}
+        <div className="px-4 py-3 mx-3 my-2 bg-slate-50 border border-slate-200 rounded-md flex items-center space-x-2.5">
+          <div className="w-8 h-8 rounded-full bg-blue-600 text-white font-black flex items-center justify-center text-xs flex-shrink-0 shadow-xs">
+            {currentUser?.name
+              ? currentUser.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
+              : 'AD'}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-bold text-xs text-gray-900 truncate leading-tight">
+              {currentUser?.name || 'Administrator'}
+            </div>
+            <div className="flex items-center gap-1 mt-0.5">
+              <span className={`text-[9.5px] px-1.5 py-0.2 rounded-xs font-bold border ${ROLE_DEFINITIONS[currentUser?.role || 'admin']?.badgeColor?.bg || 'bg-purple-100'} ${ROLE_DEFINITIONS[currentUser?.role || 'admin']?.badgeColor?.text || 'text-purple-800'} ${ROLE_DEFINITIONS[currentUser?.role || 'admin']?.badgeColor?.border || 'border-purple-300'}`}>
+                {ROLE_DEFINITIONS[currentUser?.role || 'admin']?.title || 'Admin'}
+              </span>
+            </div>
+          </div>
+        </div>
+
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          <button onClick={() => setView('dashboard')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'dashboard' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><LayoutDashboard className="w-5 h-5" /><span>Dashboard</span></button>
-          <button onClick={() => setView('inventory')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'inventory' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><List className="w-5 h-5" /><span>Inventory</span></button>
-          <button onClick={() => setView('property')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'property' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><Building2 className="w-5 h-5" /><span>Property Mgmt</span></button>
-          <button onClick={() => setView('requests')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'requests' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><Inbox className="w-5 h-5" /><span>Requests</span></button>
-          <button onClick={() => setView('scanner')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'scanner' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><ScanLine className="w-5 h-5" /><span>Scanner</span></button>
-          <button onClick={() => setView('lending')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'lending' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><HandPlatter className="w-5 h-5" /><span>Lending</span></button>
-          <button onClick={() => setView('settings')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'settings' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><SettingsIcon className="w-5 h-5" /><span>Settings</span></button>
+          {userService.canAccessView(currentUser, 'dashboard') && (
+            <button onClick={() => setView('dashboard')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'dashboard' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><LayoutDashboard className="w-5 h-5" /><span>Dashboard</span></button>
+          )}
+          {userService.canAccessView(currentUser, 'inventory') && (
+            <button onClick={() => setView('inventory')} title="Laboratory Inventory: Glasswares, plastic containers & consumables (Non-PIS)" className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'inventory' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><FlaskConical className="w-5 h-5 flex-shrink-0" /><span>Lab Inventory</span></button>
+          )}
+          {userService.canAccessView(currentUser, 'property') && (
+            <button onClick={() => setView('property')} title="Property Inventory: Equipment with Physical Property Stickers (PIS)" className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'property' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><Building2 className="w-5 h-5 flex-shrink-0" /><span>Property Inventory</span></button>
+          )}
+          {userService.canAccessView(currentUser, 'requests') && (
+            <button onClick={() => setView('requests')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'requests' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><Inbox className="w-5 h-5" /><span>Requests</span></button>
+          )}
+          {userService.canAccessView(currentUser, 'scanner') && (
+            <button onClick={() => setView('scanner')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'scanner' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><ScanLine className="w-5 h-5" /><span>Scanner</span></button>
+          )}
+          {userService.canAccessView(currentUser, 'lending') && (
+            <button onClick={() => setView('lending')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'lending' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><HandPlatter className="w-5 h-5" /><span>Lending</span></button>
+          )}
+          {userService.canAccessView(currentUser, 'settings') && (
+            <button onClick={() => setView('settings')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'settings' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><SettingsIcon className="w-5 h-5" /><span>Settings</span></button>
+          )}
         </nav>
         <div className="p-4 border-t border-gray-100 flex-shrink-0">
             <div className="text-[9px] text-gray-400 font-mono mb-4 flex items-center gap-1 justify-center">
@@ -393,26 +436,75 @@ const App: React.FC = () => {
       <main className="flex-1 flex flex-col overflow-hidden relative z-10">
         <header className="bg-white/95 backdrop-blur-md border-b border-gray-200 px-3 py-2.5 md:hidden flex justify-between items-center gap-2 z-30 shadow-sm flex-shrink-0">
              <AppBrand compact />
-             <div className="flex gap-1 flex-shrink-0">
+             <div className="flex items-center gap-2 flex-shrink-0">
                  <button aria-label="Refresh records" title="Refresh records" onClick={() => refreshData(true).catch(() => {})} className={`p-2 rounded-md text-gray-500 hover:bg-gray-100 ${isLoading ? 'animate-spin' : ''}`}><RefreshCw className="w-5 h-5"/></button>
-                 <button aria-label="Log out" title="Log out" onClick={handleLogout} className="p-2 rounded-md text-red-500 hover:bg-red-50"><LogOut className="w-5 h-5"/></button>
+                 <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg p-1 pr-1.5">
+                     <div className="w-7 h-7 rounded-full bg-[#18008F] text-white font-bold flex items-center justify-center text-[10px] flex-shrink-0">
+                         {currentUser?.name
+                           ? currentUser.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
+                           : 'SA'}
+                     </div>
+                     <button aria-label="Log out" title="Log out" onClick={handleLogout} className="p-1 rounded text-red-500 hover:bg-red-50">
+                         <LogOut className="w-4 h-4"/>
+                     </button>
+                 </div>
              </div>
         </header>
 
         <div className="flex-1 overflow-y-auto pb-20 md:pb-0">
-            <div className="bg-white border-b border-gray-200 px-4 py-4 md:px-8 md:py-6 mb-4 md:mb-6 sticky top-0 z-10 shadow-sm">
-                <div className="max-w-7xl mx-auto flex justify-between items-center">
+            <div className="bg-white border-b border-gray-200 px-4 py-3 md:px-8 md:py-4 mb-4 md:mb-6 sticky top-0 z-10 shadow-sm">
+                <div className="max-w-7xl mx-auto flex justify-between items-center gap-4">
                     <div>
                         <h2 className="text-xl md:text-2xl font-bold text-gray-900 uppercase">
-                          {view === 'property' ? 'Property Management' : view}
+                          {view === 'property' ? 'Property Inventory' : view === 'inventory' ? 'Laboratory Inventory' : view}
                         </h2>
-                        <p className="text-gray-500 text-xs font-medium uppercase">
-                          {view === 'property' ? 'School Property & Plant Assets' : 'Laboratory Records'}
+                        <p className="text-gray-500 text-xs font-medium uppercase tracking-wide">
+                          {view === 'property' 
+                            ? 'Physical Property Sticker (PIS) Tagged Assets & Equipment' 
+                            : view === 'inventory' 
+                              ? 'Glasswares, Plasticware & Consumables (Non-PIS)' 
+                              : 'Laboratory Records'}
                         </p>
                     </div>
-                    {view === 'inventory' && (
-                        <button onClick={() => setIsFormOpen(true)} className="flex items-center space-x-2 bg-blue-600 text-white px-3 md:px-5 py-2.5 rounded-md font-bold shadow-md transition-colors hover:bg-blue-700"><Plus className="w-5 h-5" /><span className="hidden sm:inline">Add Equipment</span><span className="sm:hidden">Add</span></button>
-                    )}
+
+                    <div className="flex items-center gap-3">
+                        {view === 'inventory' && (
+                            <button onClick={() => setIsFormOpen(true)} className="flex items-center space-x-2 bg-blue-600 text-white px-3 md:px-4 py-2 rounded-md font-bold shadow-sm transition-colors hover:bg-blue-700 text-sm">
+                                <Plus className="w-4 h-4" />
+                                <span className="hidden sm:inline">Add Lab Item</span>
+                                <span className="sm:hidden">Add</span>
+                            </button>
+                        )}
+
+                        {/* Top Right User Profile Card matching screenshot + Logout Button */}
+                        <div className="flex items-center bg-white border border-gray-200 rounded-lg p-1.5 pr-2.5 shadow-xs gap-3">
+                            <div className="w-10 h-10 rounded-full bg-[#18008F] text-white font-black flex items-center justify-center text-sm flex-shrink-0 shadow-xs tracking-tight">
+                                {currentUser?.name
+                                  ? currentUser.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
+                                  : 'SA'}
+                            </div>
+                            <div className="hidden sm:block text-left">
+                                <div className="text-sm font-bold text-gray-900 leading-tight">
+                                    {currentUser?.name || 'System Administrator'}
+                                </div>
+                                <div className="mt-0.5">
+                                    <span className="inline-block text-[11px] font-semibold px-2 py-0.5 rounded border bg-purple-50 text-purple-700 border-purple-200">
+                                        {currentUser?.role === 'admin' ? 'Super Admin' : (ROLE_DEFINITIONS[currentUser?.role || 'admin']?.title || 'User')}
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="h-7 w-px bg-gray-200 mx-0.5 hidden sm:block"></div>
+                            <button
+                                type="button"
+                                onClick={handleLogout}
+                                title="Log Out"
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
+                            >
+                                <LogOut className="w-4 h-4" />
+                                <span className="hidden lg:inline">Logout</span>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -420,12 +512,12 @@ const App: React.FC = () => {
                 <div className="max-w-7xl mx-auto">
                     <Routes>
                         <Route path="/dashboard" element={<Dashboard items={items} borrowRecords={borrowRecords} />} />
-                        <Route path="/inventory/*" element={<InventoryList items={items} categories={categories} onEdit={(item) => { setEditingItem(item); setIsFormOpen(true); }} onDelete={handleDelete} onShowQR={setQrItem} onPrintBarcodes={setBarcodeItem} />} />
-                        <Route path="/property/*" element={<PropertyManagement onRefreshParent={() => refreshData(true)} />} />
-                        <Route path="/requests" element={<RequestsList onRefresh={() => refreshData(true)} />} />
+                        <Route path="/inventory/*" element={<InventoryList items={items} categories={categories} onEdit={(item) => { setEditingItem(item); setIsFormOpen(true); }} onDelete={handleDelete} onShowQR={setQrItem} onPrintBarcodes={setBarcodeItem} onRefresh={() => refreshData(false, true)} />} />
+                        <Route path="/property/*" element={<PropertyManagement onRefreshParent={() => refreshData(true, true)} />} />
+                        <Route path="/requests" element={<RequestsList onRefresh={() => refreshData(false, true)} />} />
                         <Route path="/scanner/*" element={<Scanner items={items} borrowRecords={borrowRecords} onBorrow={openBorrowModal} onReturn={initiateReturn} />} />
                         <Route path="/lending/*" element={<LendingList records={borrowRecords} requests={requests} onReturn={initiateReturn} onReturnBulk={() => {}} onDelete={handleDeleteRecord} onDeleteBulk={handleDeleteRecordsBulk} />} />
-                        <Route path="/settings/*" element={settings ? <Settings settings={settings} onSave={storage.saveSettings} items={items} categories={categories} onCategoriesChange={() => refreshData(true)} /> : null} />
+                        <Route path="/settings/*" element={settings ? <Settings settings={settings} onSave={storage.saveSettings} items={items} categories={categories} onCategoriesChange={() => refreshData(true, true)} /> : null} />
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />
                     </Routes>
                 </div>
@@ -438,7 +530,7 @@ const App: React.FC = () => {
           className="md:hidden fixed inset-x-0 bottom-0 z-40 grid grid-cols-7 border-t border-gray-200 bg-white/95 backdrop-blur-md shadow-[0_-4px_12px_rgba(0,0,0,0.08)]"
           style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
         >
-          {mobileNavigation.map(({ view: navView, label, icon: Icon }) => {
+          {mobileNavigation.filter(nav => userService.canAccessView(currentUser, nav.view)).map(({ view: navView, label, icon: Icon }) => {
             const isActive = view === navView;
             return (
               <button

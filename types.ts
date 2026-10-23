@@ -1,4 +1,14 @@
 
+export interface ItemAttachment {
+  id: string; // Unique attachment ID
+  name: string; // File name
+  size: number; // File size in bytes
+  fileCode: string; // DDownload file_code (e.g. gi4o0tlro01u)
+  downloadUrl: string; // Direct link to DDownload (e.g. https://ddownload.com/gi4o0tlro01u)
+  uploadedAt: string; // ISO date string
+  category?: 'Manual' | 'MSDS' | 'Calibration' | 'Warranty' | 'Datasheet' | 'Guide' | 'Other';
+}
+
 export interface InventoryBox {
   id: string; // Unique Box ID (e.g. CHE-101-BOX-001)
   label: string; // Friendly label "Box 1"
@@ -22,6 +32,7 @@ export interface InventoryItem {
   isConsumable?: boolean;
   maxBorrowable?: number | null; // Limit the number of items available for loan (e.g. unboxed stock)
   boxes?: InventoryBox[]; // Boxed inventory tracking
+  attachments?: ItemAttachment[]; // DDownload cloud-hosted manuals, safety sheets, and documents
 }
 
 export enum ItemCondition {
@@ -77,6 +88,9 @@ export interface AppSettings {
   
   // Administrator recipients for SMTP notifications
   notificationEmails?: string; // Comma-separated list of emails to notify on new requests
+
+  // DDownload Cloud Storage Integration (https://ddownload.com/api)
+  ddownloadApiKey?: string; // DDownload API key for uploading and storing equipment files
 }
 
 export interface Category {
@@ -181,4 +195,124 @@ export interface PropertyStats {
   countByCondition: { name: string; value: number }[];
   valueByFundSource: { name: string; value: number }[];
 }
+
+// --- Role-Based Access Control (RBAC) Types ---
+
+export type UserRole =
+  | 'admin'          // Full system administrator (all modules, settings, users)
+  | 'custodian'      // Property Custodian (Property Management, PIS tags, reports, inventory view)
+  | 'lab_manager'    // Laboratory In-Charge (Inventory, Borrow requests, lending, boxes)
+  | 'technician'     // Lab Technician / Staff (Lending, Scanner, view inventory/property)
+  | 'borrower'       // Faculty / Borrower (View catalog, request equipment)
+  | 'custom';        // Custom tailored permissions
+
+export type UserPermission =
+  | 'inventory:view'
+  | 'inventory:manage'
+  | 'property:view'
+  | 'property:manage'
+  | 'requests:view'
+  | 'requests:manage'
+  | 'lending:view'
+  | 'lending:manage'
+  | 'scanner:use'
+  | 'settings:view'
+  | 'settings:manage'
+  | 'users:manage';
+
+export interface AppUser {
+  id: string;
+  username: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  department: string;
+  password?: string;
+  permissions: UserPermission[];
+  status: 'active' | 'inactive';
+  createdAt: string;
+  lastLogin?: string;
+  avatarUrl?: string;
+}
+
+export const ROLE_DEFINITIONS: Record<UserRole, {
+  label: string;
+  title: string;
+  description: string;
+  badgeColor: { bg: string; text: string; border: string };
+  defaultPermissions: UserPermission[];
+}> = {
+  admin: {
+    label: 'System Administrator',
+    title: 'Super Admin',
+    description: 'Full unconstrained access to all modules, settings, database, and user RBAC controls.',
+    badgeColor: { bg: 'bg-purple-100', text: 'text-purple-800', border: 'border-purple-300' },
+    defaultPermissions: [
+      'inventory:view', 'inventory:manage',
+      'property:view', 'property:manage',
+      'requests:view', 'requests:manage',
+      'lending:view', 'lending:manage',
+      'scanner:use',
+      'settings:view', 'settings:manage',
+      'users:manage'
+    ]
+  },
+  custodian: {
+    label: 'Property Custodian',
+    title: 'Asset Officer',
+    description: 'Manages Property Management articles, PIS & Cable sticker tagging, DepEd reports, and equipment valuation.',
+    badgeColor: { bg: 'bg-amber-100', text: 'text-amber-800', border: 'border-amber-300' },
+    defaultPermissions: [
+      'property:view', 'property:manage',
+      'inventory:view',
+      'scanner:use',
+      'settings:view'
+    ]
+  },
+  lab_manager: {
+    label: 'Laboratory In-Charge',
+    title: 'Lab Manager',
+    description: 'Full management of laboratory equipment, borrow request approvals, lending, box packaging, and audits.',
+    badgeColor: { bg: 'bg-blue-100', text: 'text-blue-800', border: 'border-blue-300' },
+    defaultPermissions: [
+      'inventory:view', 'inventory:manage',
+      'requests:view', 'requests:manage',
+      'lending:view', 'lending:manage',
+      'scanner:use',
+      'settings:view'
+    ]
+  },
+  technician: {
+    label: 'Lab Technician / Staff',
+    title: 'Technical Staff',
+    description: 'Operates equipment lending, returns, scanner check-in/out, and viewing inventory records.',
+    badgeColor: { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300' },
+    defaultPermissions: [
+      'inventory:view',
+      'property:view',
+      'lending:view', 'lending:manage',
+      'scanner:use'
+    ]
+  },
+  borrower: {
+    label: 'Teacher / Faculty Requester',
+    title: 'Borrower',
+    description: 'Browse available science equipment catalog, monitor borrow requests, and view assigned articles.',
+    badgeColor: { bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-300' },
+    defaultPermissions: [
+      'inventory:view',
+      'requests:view'
+    ]
+  },
+  custom: {
+    label: 'Custom Role',
+    title: 'Custom RBAC',
+    description: 'Tailored permissions configured specifically for this user account.',
+    badgeColor: { bg: 'bg-indigo-100', text: 'text-indigo-800', border: 'border-indigo-300' },
+    defaultPermissions: [
+      'inventory:view'
+    ]
+  }
+};
+
 

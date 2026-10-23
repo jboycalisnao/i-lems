@@ -1,7 +1,9 @@
 
 
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { InventoryItem } from '../types';
+import { DEPLOYED_URL } from '../branding';
 import { X, Printer, Copy, Package } from 'lucide-react';
 
 interface QRCodeModalProps {
@@ -14,7 +16,7 @@ const QRCodeModal: React.FC<QRCodeModalProps> = ({ item, onClose }) => {
   const [mode, setMode] = useState<'item' | 'boxes'>('item');
 
   // Public URL for the QR code
-  const publicUrl = `${window.location.origin}?view_item=${item.id}`;
+  const publicUrl = `${DEPLOYED_URL}/?view_item=${item.id}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(publicUrl)}`;
   const printRef = useRef<HTMLDivElement>(null);
 
@@ -135,8 +137,8 @@ const QRCodeModal: React.FC<QRCodeModalProps> = ({ item, onClose }) => {
 
   const hasBoxes = item.boxes && item.boxes.length > 0;
 
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+  const modalContent = (
+    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
       <div className="bg-white backdrop-blur-2xl rounded-md shadow-xl w-full max-w-sm p-6 relative border border-gray-200">
         <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors">
           <X className="w-5 h-5" />
@@ -209,6 +211,10 @@ const QRCodeModal: React.FC<QRCodeModalProps> = ({ item, onClose }) => {
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined'
+    ? createPortal(modalContent, document.body)
+    : modalContent;
 };
 
 export default QRCodeModal;

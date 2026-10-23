@@ -2,9 +2,15 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { InventoryItem, ItemCondition, Category } from '../types';
-import { Edit2, Trash2, QrCode, Search, Filter, Barcode, FileText, List, Printer, AlertTriangle, XCircle, Clipboard, ChevronDown, ChevronRight, Package, LayoutGrid, Droplets, Minus } from 'lucide-react';
+import { 
+  Edit2, Trash2, QrCode, Search, Filter, Barcode, FileText, List, 
+  Printer, AlertTriangle, XCircle, Clipboard, ChevronDown, ChevronRight, 
+  Package, LayoutGrid, Droplets, Minus, Paperclip, MapPin, Microscope 
+} from 'lucide-react';
 import { getCategoryColor, getCategoryIcon } from '../constants';
 import { SYSTEM_NAME } from '../branding';
+import * as storage from '../services/storageService';
+import ItemFileManagerModal from './ItemFileManagerModal';
 
 interface InventoryListProps {
   items: InventoryItem[];
@@ -15,6 +21,7 @@ interface InventoryListProps {
   onPrintBarcodes: (item: InventoryItem) => void;
   onConsume?: (item: InventoryItem) => void;
   initialSearchTerm?: string;
+  onRefresh?: () => void;
 }
 
 const stripMetadata = (text: string) => {
@@ -22,14 +29,26 @@ const stripMetadata = (text: string) => {
     return text.replace(/<!--SYSTEM_META:.*?-->/g, '').trim();
 };
 
-const InventoryList: React.FC<InventoryListProps> = ({ items, categories, onEdit, onDelete, onShowQR, onPrintBarcodes, onConsume, initialSearchTerm }) => {
+const InventoryList: React.FC<InventoryListProps> = ({ 
+  items, 
+  categories, 
+  onEdit, 
+  onDelete, 
+  onShowQR, 
+  onPrintBarcodes, 
+  onConsume, 
+  initialSearchTerm,
+  onRefresh
+}) => {
   const location = useLocation();
   const navigate = useNavigate();
   const routeTab = location.pathname.split('/').filter(Boolean)[1];
   const activeTab: 'list' | 'report' = routeTab === 'report' ? 'report' : 'list';
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('All');
+  const [filterLocation, setFilterLocation] = useState<string>('All');
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [managingFilesItem, setManagingFilesItem] = useState<InventoryItem | null>(null);
 
   // Handle Initial Search Term (e.g. from Deep Link)
   useEffect(() => {
@@ -44,6 +63,15 @@ const InventoryList: React.FC<InventoryListProps> = ({ items, categories, onEdit
       }
   }, [navigate, routeTab]);
 
+  // Distinct locations from inventory items
+  const distinctLocations = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach(i => {
+      if (i.location?.trim()) set.add(i.location.trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  }, [items]);
+
   // --- Filtering Logic ---
   const filteredItems = useMemo(() => {
       return items.filter(item => {
@@ -52,9 +80,10 @@ const InventoryList: React.FC<InventoryListProps> = ({ items, categories, onEdit
                             (item.shortId && item.shortId.toLowerCase().includes(searchTerm.toLowerCase())) ||
                             item.id.toLowerCase().includes(searchTerm.toLowerCase());
         const matchesCategory = filterCategory === 'All' || item.category === filterCategory;
-        return matchesSearch && matchesCategory;
+        const matchesLocation = filterLocation === 'All' || item.location === filterLocation;
+        return matchesSearch && matchesCategory && matchesLocation;
       });
-  }, [items, searchTerm, filterCategory]);
+  }, [items, searchTerm, filterCategory, filterLocation]);
 
   // --- Grouping Logic ---
   const groupedItems = useMemo(() => {
@@ -252,7 +281,16 @@ const InventoryList: React.FC<InventoryListProps> = ({ items, categories, onEdit
 
   return (
     <div className="bg-white rounded-md shadow-xl border border-gray-200 flex flex-col h-[calc(100dvh-250px)] min-h-[420px] md:h-[calc(100vh-200px)] md:min-h-0">
-      <div className="flex overflow-x-auto border-b border-gray-200 bg-gray-50/50 rounded-t-md px-3 md:px-4 pt-3 md:pt-4 gap-1 flex-shrink-0">
+      {/* Informative Banner */}
+      <div className="bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 border-b border-blue-200/60 px-4 py-2.5 flex items-center gap-2.5 text-xs">
+        <Microscope className="w-4 h-4 text-blue-700 flex-shrink-0" />
+        <div className="text-blue-950 min-w-0">
+          <span className="font-bold">Laboratory Inventory (Non-PIS):</span> Equipment and supplies that do <em>not</em> carry physical property stickers — primarily glasswares, plastic containers, and consumables (gloves, filter paper, batteries, blades).
+          <span className="hidden xl:inline text-blue-700 ml-1">For durable tagged assets (microscopes, triple beam balances, hot plates), check <strong>Property Inventory</strong>.</span>
+        </div>
+      </div>
+
+      <div className="flex overflow-x-auto border-b border-gray-200 bg-gray-50/50 px-3 md:px-4 pt-3 md:pt-4 gap-1 flex-shrink-0">
           <button
             onClick={() => navigate('/inventory/list')}
             className={`px-4 py-2 rounded-t-lg text-sm font-medium transition-colors flex items-center gap-2 ${
@@ -311,6 +349,24 @@ const InventoryList: React.FC<InventoryListProps> = ({ items, categories, onEdit
                         {categories.map(cat => (
                         <option key={cat.id} value={cat.name} className="bg-white text-gray-800">{cat.name}</option>
                         ))}
+                    </select>
+
+                    <MapPin className="text-gray-500 w-4 h-4 ml-1" />
+                    <select 
+                        className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer bg-white text-gray-800 shadow-sm"
+                        value={filterLocation}
+                        onChange={(e) => setFilterLocation(e.target.value)}
+                        title="Filter by laboratory location / cabinet"
+                    >
+                        <option value="All" className="bg-white text-gray-800">All Locations ({items.length})</option>
+                        {distinctLocations.map(loc => {
+                          const count = items.filter(i => i.location === loc).length;
+                          return (
+                            <option key={loc} value={loc} className="bg-white text-gray-800">
+                              {loc} ({count})
+                            </option>
+                          );
+                        })}
                     </select>
                 </div>
             </div>
@@ -391,6 +447,20 @@ const InventoryList: React.FC<InventoryListProps> = ({ items, categories, onEdit
                                                                     </div>
                                                                     {item.shortId && <div className="text-[10px] text-gray-400 font-mono mt-0.5">{item.shortId}</div>}
                                                                     {sanitizedDescription && <div className="text-xs text-gray-500 truncate max-w-[180px]">{sanitizedDescription}</div>}
+                                                                    {item.attachments && item.attachments.length > 0 && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                setManagingFilesItem(item);
+                                                                            }}
+                                                                            className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 mt-1 transition-colors"
+                                                                            title="View attached DDownload files"
+                                                                        >
+                                                                            <Paperclip className="w-3 h-3" />
+                                                                            <span>{item.attachments.length} {item.attachments.length === 1 ? 'file' : 'files'}</span>
+                                                                        </button>
+                                                                    )}
                                                                 </td>
                                                                 <td className="px-6 py-3">
                                                                     <div className="flex flex-col">
@@ -423,6 +493,21 @@ const InventoryList: React.FC<InventoryListProps> = ({ items, categories, onEdit
                                                                             </button>
                                                                         )}
                                                                         
+                                                                        <button 
+                                                                            onClick={() => setManagingFilesItem(item)}
+                                                                            className={`p-1.5 rounded-md transition-colors ${
+                                                                                (item.attachments && item.attachments.length > 0)
+                                                                                    ? 'text-blue-600 bg-blue-50 hover:bg-blue-100'
+                                                                                    : 'text-gray-500 hover:text-blue-600 hover:bg-blue-50'
+                                                                            }`}
+                                                                            title={
+                                                                                item.attachments && item.attachments.length > 0
+                                                                                    ? `DDownload Files (${item.attachments.length} attached)`
+                                                                                    : 'Attach DDownload Files'
+                                                                            }
+                                                                        >
+                                                                            <Paperclip className="w-4 h-4" />
+                                                                        </button>
                                                                         <button 
                                                                             onClick={() => onPrintBarcodes(item)}
                                                                             className="p-1.5 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded-md transition-colors"
@@ -576,6 +661,18 @@ const InventoryList: React.FC<InventoryListProps> = ({ items, categories, onEdit
                   </div>
               </div>
           </div>
+      )}
+
+      {managingFilesItem && (
+        <ItemFileManagerModal
+          item={managingFilesItem}
+          onClose={() => setManagingFilesItem(null)}
+          onSaveAttachments={async (updatedItem) => {
+            await storage.saveItem(updatedItem);
+            setManagingFilesItem(updatedItem);
+            onRefresh?.();
+          }}
+        />
       )}
     </div>
   );

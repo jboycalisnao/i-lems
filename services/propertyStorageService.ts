@@ -1,9 +1,20 @@
 import { PropertyItem, PropertyStats, PropertyCondition, PropertyInventoryType } from '../types';
 import { supabase } from '../supabaseClient';
+import { LNHS_ACTUAL_PROPERTY_ITEMS } from '../data/lnhsActualEquipment';
+import { rememberLocation } from './locationService';
 
 const LOCAL_STORAGE_KEY = 'scilab_property_items';
 
 export const PROPERTY_CATEGORIES = [
+  // Science Laboratory Equipment (Items with Physical Property Stickers - PIS)
+  'Science Lab - Apparatus & Instruments',
+  'Science Lab - Balances & Measurement',
+  'Science Lab - Electrical & Electronic Equipment',
+  'Science Lab - Experimental Kits & Mechanics',
+  'Science Lab - Earth & Space Science',
+  'Science Laboratory Equipment (General)',
+
+  // General School Property Categories
   'IT & Digital Equipment',
   'School Furniture & Fixtures',
   'Audio-Visual & Electronics',
@@ -60,7 +71,7 @@ export const INITIAL_PROPERTY_SEEDS: PropertyItem[] = [
     unitValue: 42000,
     totalValue: 42000,
     location: 'Audio-Visual Room (AVR)',
-    custodian: 'Roberto Ramos (Property Custodian)',
+    custodian: 'Jeebs M. Sabidalas',
     condition: 'Serviceable',
     acquisitionDate: '2023-08-20',
     sourceOfFund: 'PTA Donation',
@@ -105,7 +116,7 @@ export const INITIAL_PROPERTY_SEEDS: PropertyItem[] = [
     unitValue: 56000,
     totalValue: 112000,
     location: "Principal's Office & Faculty Room",
-    custodian: 'Roberto Ramos (Property Custodian)',
+    custodian: 'Jeebs M. Sabidalas',
     condition: 'Serviceable',
     acquisitionDate: '2022-05-18',
     sourceOfFund: 'SEF (Special Education Fund)',
@@ -150,7 +161,7 @@ export const INITIAL_PROPERTY_SEEDS: PropertyItem[] = [
     unitValue: 3200,
     totalValue: 25600,
     location: 'Science Lab, Corridors & Canteen',
-    custodian: 'Roberto Ramos (Property Custodian)',
+    custodian: 'Jeebs M. Sabidalas',
     condition: 'Serviceable',
     acquisitionDate: '2025-02-14',
     sourceOfFund: 'School MOOE',
@@ -224,8 +235,13 @@ export const mapPropertyItem = (data: any): PropertyItem => {
   };
 };
 
+// In-Memory & Persistent Caching for Property Items
+let memoryCachedPropertyItems: PropertyItem[] | null = null;
+let lastPropertyFetchTimestamp = 0;
+const PROPERTY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache lifetime
+
 // Retrieve items from local storage cache (only real items, zero mock seeds)
-const loadLocalProperties = (): PropertyItem[] => {
+export const loadLocalProperties = (): PropertyItem[] => {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (!raw) {
@@ -247,7 +263,7 @@ const loadLocalProperties = (): PropertyItem[] => {
   }
 };
 
-const saveLocalProperties = (items: PropertyItem[]) => {
+export const saveLocalProperties = (items: PropertyItem[]) => {
   try {
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(items));
   } catch (e) {
@@ -256,12 +272,52 @@ const saveLocalProperties = (items: PropertyItem[]) => {
 };
 
 /**
- * Fetch all Property Items directly from Cloud (Supabase):
- * Reads authoritative cloud data from `property_items` table.
- * Caches real cloud items locally for offline resilience.
- * Zero mock or seed data.
+ * Synchronously get cached property items for instant component hydration (0ms delay)
  */
-export const getPropertyItems = async (): Promise<PropertyItem[]> => {
+export const getCachedPropertyItems = (): PropertyItem[] => {
+  if (memoryCachedPropertyItems && memoryCachedPropertyItems.length > 0) {
+    return memoryCachedPropertyItems;
+  }
+  const local = loadLocalProperties();
+  if (local && local.length > 0) {
+    memoryCachedPropertyItems = local;
+    return local;
+  }
+  return [];
+};
+
+/**
+ * Invalidate the property cache to force a fresh query on next request
+ */
+export const invalidatePropertyCache = (): void => {
+  lastPropertyFetchTimestamp = 0;
+  memoryCachedPropertyItems = null;
+};
+
+/**
+ * Fetch all Property Items:
+ * - Returns in-memory / local cache immediately if fresh (0ms delay)
+ * - Only queries Supabase when cache is expired or forceRefresh is true
+ */
+export const getPropertyItems = async (forceRefresh = false): Promise<PropertyItem[]> => {
+  const now = Date.now();
+
+  // 1. Return in-memory cache if valid and not forcing a refresh
+  if (!forceRefresh && memoryCachedPropertyItems && memoryCachedPropertyItems.length > 0 && (now - lastPropertyFetchTimestamp < PROPERTY_CACHE_TTL)) {
+    return memoryCachedPropertyItems;
+  }
+
+  // 2. Return local storage cache if available and not forcing refresh
+  if (!forceRefresh && !memoryCachedPropertyItems) {
+    const local = loadLocalProperties();
+    if (local && local.length > 0) {
+      memoryCachedPropertyItems = local;
+      lastPropertyFetchTimestamp = now;
+      return local;
+    }
+  }
+
+  // 3. Query authoritative data from Supabase
   if (supabase && typeof supabase.from === 'function') {
     try {
       const { data, error } = await supabase
@@ -271,6 +327,8 @@ export const getPropertyItems = async (): Promise<PropertyItem[]> => {
 
       if (!error && Array.isArray(data)) {
         const mapped = data.map(mapPropertyItem);
+        memoryCachedPropertyItems = mapped;
+        lastPropertyFetchTimestamp = Date.now();
         saveLocalProperties(mapped);
         return mapped;
       }
@@ -282,7 +340,9 @@ export const getPropertyItems = async (): Promise<PropertyItem[]> => {
     }
   }
 
-  return loadLocalProperties();
+  const local = loadLocalProperties();
+  memoryCachedPropertyItems = local;
+  return local;
 };
 
 /**
@@ -353,6 +413,11 @@ export const savePropertyItem = async (item: PropertyItem): Promise<{ success: b
     updatedList = [item, ...current];
   }
   saveLocalProperties(updatedList);
+  memoryCachedPropertyItems = updatedList;
+  lastPropertyFetchTimestamp = Date.now();
+  if (item.location) {
+    rememberLocation(item.location);
+  }
 
   // 3. Track highest PIS code sequence persistently
   if (item.pisCode && item.pisCode.startsWith('PIS-')) {
@@ -389,6 +454,8 @@ export const deletePropertyItem = async (id: string): Promise<{ success: boolean
   const current = loadLocalProperties();
   const filtered = current.filter(p => p.id !== id);
   saveLocalProperties(filtered);
+  memoryCachedPropertyItems = filtered;
+  lastPropertyFetchTimestamp = Date.now();
 
   return { success: true };
 };
@@ -416,6 +483,8 @@ export const deletePropertyItemsBulk = async (ids: string[]): Promise<{ success:
   const current = loadLocalProperties();
   const filtered = current.filter(p => !idSet.has(p.id));
   saveLocalProperties(filtered);
+  memoryCachedPropertyItems = filtered;
+  lastPropertyFetchTimestamp = Date.now();
 
   return { success: true };
 };
@@ -615,4 +684,43 @@ export const exportPropertyCSV = (items: PropertyItem[]) => {
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+};
+
+/**
+ * Sync Actual LNHS Science Laboratory Property Items from the verified DepEd Excel catalog
+ */
+export const syncLNHSPropertyItems = async (): Promise<{ added: number; updated: number; total: number }> => {
+  const existing = await getPropertyItems();
+  let added = 0;
+  let updated = 0;
+
+  for (const itemDef of LNHS_ACTUAL_PROPERTY_ITEMS) {
+    const found = existing.find(e => 
+      e.name.toLowerCase().trim() === itemDef.name.toLowerCase().trim() ||
+      e.propertyNumber === itemDef.propertyNumber ||
+      (e.pisCode && itemDef.pisCode && e.pisCode === itemDef.pisCode)
+    );
+
+    if (found) {
+      await savePropertyItem({
+        ...found,
+        category: itemDef.category,
+        quantity: itemDef.quantity,
+        location: itemDef.location,
+        custodian: itemDef.custodian || found.custodian,
+        description: itemDef.description || found.description,
+        notes: itemDef.notes || found.notes
+      });
+      updated++;
+    } else {
+      const newItem: PropertyItem = {
+        id: crypto.randomUUID(),
+        ...itemDef
+      };
+      await savePropertyItem(newItem);
+      added++;
+    }
+  }
+
+  return { added, updated, total: LNHS_ACTUAL_PROPERTY_ITEMS.length };
 };

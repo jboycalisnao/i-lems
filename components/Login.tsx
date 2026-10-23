@@ -2,10 +2,11 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { FlaskConical, Lock, User, AlertCircle, Eye, EyeOff, Mail, ArrowRight, ArrowLeft, KeyRound, Loader2, Send, ShoppingBag, Search, QrCode, MapPin, Activity, Box, Tag, Building2, ShieldCheck, Barcode, CheckCircle2 } from 'lucide-react';
-import { AppSettings, BorrowRequest, InventoryItem, PropertyItem } from '../types';
+import { AppSettings, BorrowRequest, InventoryItem, PropertyItem, AppUser } from '../types';
 import * as storage from '../services/storageService';
 import * as propertyStorage from '../services/propertyStorageService';
 import * as notifications from '../services/notificationService';
+import * as userService from '../services/userService';
 import { getPasswordResetTemplate } from '../services/emailTemplates';
 import PublicRequestModal from './PublicRequestModal';
 import { getCategoryColor, getCategoryIcon } from '../constants';
@@ -22,7 +23,7 @@ interface LoginProps {
   expectedPassword?: string;
   recoveryEmail?: string;
   settings?: AppSettings; 
-  onLogin: (status: boolean) => void;
+  onLogin: (status: boolean, user?: AppUser) => void;
   onPasswordReset?: (newPassword: string) => void;
 }
 
@@ -133,15 +134,50 @@ const Login: React.FC<LoginProps> = ({
       }
   };
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    
+
+    // 1. First, attempt authentication against RBAC users database
+    try {
+      const authResult = await userService.authenticateUser(username, password);
+      if (authResult.user) {
+        onLogin(true, authResult.user);
+        return;
+      } else if (authResult.error && authResult.error.includes('suspended')) {
+        setError(authResult.error);
+        return;
+      }
+    } catch (err) {
+      console.warn('RBAC user authentication error, trying fallback:', err);
+    }
+
+    // 2. Fallback check for settings-configured admin credentials
     const validUser = expectedUsername || 'admin';
     const validPass = expectedPassword || 'admin123';
 
     if (username === validUser && password === validPass) {
-      onLogin(true);
+      const defaultAdmin: AppUser = {
+        id: 'user-001',
+        username: validUser,
+        name: 'System Administrator',
+        email: recoveryEmail || 'admin@leonnationalhigh.edu.ph',
+        role: 'admin',
+        department: 'ICT & Laboratory Administration',
+        permissions: [
+          'inventory:view', 'inventory:manage',
+          'property:view', 'property:manage',
+          'requests:view', 'requests:manage',
+          'lending:view', 'lending:manage',
+          'scanner:use',
+          'settings:view', 'settings:manage',
+          'users:manage'
+        ],
+        status: 'active',
+        createdAt: new Date().toISOString()
+      };
+      userService.setCurrentUser(defaultAdmin);
+      onLogin(true, defaultAdmin);
     } else {
       setError('Invalid username or password');
     }

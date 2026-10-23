@@ -115,7 +115,7 @@ export const notifyBorrowerOfOverdue = async (settings: AppSettings, record: Bor
 
     return sendEmail(settings, {
         to_email: record.borrowerEmail,
-        subject: `⚠️ OVERDUE EQUIPMENT: ${record.itemName} - ${settings.appName}`,
+        subject: `OVERDUE EQUIPMENT: ${record.itemName} - ${settings.appName}`,
         body: `Urgent: Your borrowed equipment is past its due date (${record.dueDate}). Please return it immediately.`,
         html_body: htmlBody
     });

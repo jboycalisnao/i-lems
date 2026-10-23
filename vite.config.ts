@@ -4,7 +4,14 @@ import react from '@vitejs/plugin-react';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import dns from 'node:dns';
+if (typeof dns?.setDefaultResultOrder === 'function') {
+  try {
+    dns.setDefaultResultOrder('ipv4first');
+  } catch {}
+}
 import { getPublicSmtpConfig, sendSmtpEmail, verifySmtpConnection, type SmtpEmailPayload } from './server/smtp';
+import { ddownloadHandler } from './server/ddownload';
 
 const smtpDevelopmentApi = (env: Record<string, string>) => ({
   name: 'smtp-development-api',
@@ -33,6 +40,21 @@ const smtpDevelopmentApi = (env: Record<string, string>) => ({
       } catch (error) {
         response.statusCode = 500;
         response.end(JSON.stringify({ error: error instanceof Error ? error.message : 'SMTP request failed.' }));
+      }
+    });
+
+    server.middlewares.use('/api/ddownload', async (request, response) => {
+      try {
+        await ddownloadHandler(request, response);
+      } catch (error) {
+        if (!response.headersSent) {
+          response.setHeader('Content-Type', 'application/json');
+          response.statusCode = 200;
+          response.end(JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : 'DDownload server request failed'
+          }));
+        }
       }
     });
   }

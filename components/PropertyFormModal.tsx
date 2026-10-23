@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { PropertyItem, PropertyCondition, PropertyInventoryType } from '../types';
 import { PROPERTY_CATEGORIES, FUND_SOURCES, generateNextPropertyNumber, generateNextPISCode } from '../services/propertyStorageService';
 import { X, Save, Sparkles, Building2, Layers, DollarSign, User, MapPin, Tag } from 'lucide-react';
+import LocationSearchSelect from './LocationSearchSelect';
 
 interface PropertyFormModalProps {
   initialData?: PropertyItem;
@@ -35,7 +36,7 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
       unitValue: 0,
       totalValue: 0,
       location: 'Science Laboratory',
-      custodian: 'Property Custodian',
+      custodian: 'Jeebs M. Sabidalas',
       condition: 'Serviceable',
       acquisitionDate: new Date().toISOString().split('T')[0],
       sourceOfFund: FUND_SOURCES[1], // School MOOE
@@ -71,7 +72,8 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
 
   const handleGenerateNumber = () => {
     let prefix = 'LNHS-PROP';
-    if (formData.category?.includes('IT')) prefix = 'LNHS-DCP';
+    if (formData.category?.includes('Science') || formData.category?.includes('Lab')) prefix = 'LNHS-SCI';
+    else if (formData.category?.includes('IT')) prefix = 'LNHS-DCP';
     else if (formData.category?.includes('Furniture')) prefix = 'LNHS-FURN';
     else if (formData.category?.includes('HVAC')) prefix = 'LNHS-HVAC';
     else if (formData.category?.includes('Safety')) prefix = 'LNHS-SAFE';
@@ -131,12 +133,12 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 md:p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-md shadow-2xl max-w-3xl w-full overflow-hidden border border-gray-200 flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
+      <div className="bg-white rounded-md shadow-2xl max-w-4xl lg:max-w-5xl w-full overflow-hidden border border-gray-200 flex flex-col max-h-[92vh]">
         {/* Header */}
-        <div className="px-6 py-4 bg-gradient-to-r from-blue-900 via-indigo-900 to-blue-800 text-white flex justify-between items-center flex-shrink-0">
+        <div className="px-6 py-4 bg-blue-900 text-white flex justify-between items-center flex-shrink-0 border-b border-blue-950">
           <div className="flex items-center space-x-3">
-            <div className="p-2 bg-white/10 rounded-sm backdrop-blur-md">
+            <div className="p-2 bg-blue-950/50 rounded-sm border border-blue-800">
               <Building2 className="w-5 h-5 text-blue-200" />
             </div>
             <div>
@@ -410,24 +412,22 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
           </div>
 
           {/* Section 3: Custody, Location & Condition */}
-          <div className="bg-gray-50/70 p-4 rounded-md border border-gray-200 space-y-4">
+          <div className="bg-gray-50/70 p-5 rounded-md border border-gray-200 space-y-4">
             <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5">
               <MapPin className="w-4 h-4 text-indigo-600" />
               Custodianship & Current Status
             </h4>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Row 1: Location & Custodian (Generous 2-column layout to prevent truncation) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
-                  Location / Room / Office <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
+                <LocationSearchSelect
+                  label="Location / Room / Office"
                   name="location"
+                  id="prop-location"
                   value={formData.location || ''}
-                  onChange={handleChange}
-                  placeholder="e.g. Computer Laboratory 1"
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
+                  onChange={(newLoc) => setFormData(prev => ({ ...prev, location: newLoc }))}
+                  placeholder="Search or enter location (e.g. Cabinet 1, Cabinet 3)..."
                   required
                 />
               </div>
@@ -441,12 +441,15 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                   name="custodian"
                   value={formData.custodian || ''}
                   onChange={handleChange}
-                  placeholder="e.g. Mary Jane Cruz (ICT Coord)"
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
+                  placeholder="e.g. Jeebs M. Sabidalas (Property Custodian)"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
                   required
                 />
               </div>
+            </div>
 
+            {/* Row 2: Condition & Inspection Dates */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1">
                   Property Condition <span className="text-red-500">*</span>
@@ -455,13 +458,13 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                   name="condition"
                   value={formData.condition || 'Serviceable'}
                   onChange={handleChange}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
                 >
-                  <option value="Serviceable">🟢 Serviceable (Working / Good)</option>
-                  <option value="Needs Repair">🟡 Needs Repair (Minor issue)</option>
-                  <option value="Unserviceable">🔴 Unserviceable (Non-functional)</option>
-                  <option value="For Condemnation">⚫ For Condemnation / Disposal</option>
-                  <option value="Disposed">⚪ Disposed / Dropped</option>
+                  <option value="Serviceable">Serviceable (Working / Good)</option>
+                  <option value="Needs Repair">Needs Repair (Minor issue)</option>
+                  <option value="Unserviceable">Unserviceable (Non-functional)</option>
+                  <option value="For Condemnation">For Condemnation / Disposal</option>
+                  <option value="Disposed">Disposed / Dropped</option>
                 </select>
               </div>
 
@@ -474,7 +477,7 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                   name="acquisitionDate"
                   value={formData.acquisitionDate || ''}
                   onChange={handleChange}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
                 />
               </div>
 
@@ -487,23 +490,24 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                   name="lastInspected"
                   value={formData.lastInspected || ''}
                   onChange={handleChange}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
                 />
               </div>
+            </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
-                  Additional Notes / Warranty
-                </label>
-                <input
-                  type="text"
-                  name="notes"
-                  value={formData.notes || ''}
-                  onChange={handleChange}
-                  placeholder="Warranty info, remarks, supplier..."
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-normal focus:ring-2 focus:ring-blue-600 focus:outline-none"
-                />
-              </div>
+            {/* Row 3: Additional Notes / Remarks / Warranty (Dedicated full-width row) */}
+            <div>
+              <label className="block text-xs font-bold text-gray-700 mb-1">
+                Additional Notes / Warranty / Remarks
+              </label>
+              <input
+                type="text"
+                name="notes"
+                value={formData.notes || ''}
+                onChange={handleChange}
+                placeholder="Warranty details, supplier contact, remarks, maintenance schedule..."
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-normal focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+              />
             </div>
           </div>
 

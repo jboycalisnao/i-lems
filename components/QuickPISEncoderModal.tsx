@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { PropertyItem, PropertyCondition } from '../types';
 import { PROPERTY_CATEGORIES, FUND_SOURCES, generateNextPropertyNumber, getPropertyByPIS } from '../services/propertyStorageService';
 import { X, Search, CheckCircle2, ArrowRight, Building2, Tag, Save, Sparkles, AlertCircle } from 'lucide-react';
+import LocationSearchSelect from './LocationSearchSelect';
 
 interface QuickPISEncoderModalProps {
   existingItems: PropertyItem[];
@@ -33,7 +34,7 @@ export const QuickPISEncoderModal: React.FC<QuickPISEncoderModalProps> = ({
     unit: 'unit',
     unitValue: 0,
     location: 'Science Laboratory',
-    custodian: 'Property Custodian',
+    custodian: 'Jeebs M. Sabidalas',
     condition: 'Serviceable',
     acquisitionDate: new Date().toISOString().split('T')[0],
     sourceOfFund: FUND_SOURCES[1],
@@ -102,7 +103,7 @@ export const QuickPISEncoderModal: React.FC<QuickPISEncoderModalProps> = ({
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
       <div className="bg-white rounded-md shadow-2xl max-w-2xl w-full overflow-hidden border border-gray-200 flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="px-6 py-4 bg-yellow-500 text-gray-950 flex justify-between items-center flex-shrink-0 border-b border-yellow-600">
@@ -269,13 +270,13 @@ export const QuickPISEncoderModal: React.FC<QuickPISEncoderModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-bold text-gray-700 mb-1">Location / Room *</label>
-                  <input
-                    type="text"
+                  <LocationSearchSelect
+                    label="Location / Room"
+                    name="location"
+                    id="quick-location"
                     value={newProp.location || ''}
-                    onChange={(e) => setNewProp(prev => ({ ...prev, location: e.target.value }))}
-                    placeholder="e.g. Computer Laboratory 1"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
+                    onChange={(newLoc) => setNewProp(prev => ({ ...prev, location: newLoc }))}
+                    placeholder="Search or enter location (e.g. Cabinet 1, Cabinet 3)..."
                     required
                   />
                 </div>

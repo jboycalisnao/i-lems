@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { PropertyItem, PropertyCondition, PropertyInventoryType } from '../types';
 import * as propertyStorage from '../services/propertyStorageService';
 import { supabase } from '../supabaseClient';
@@ -9,6 +9,7 @@ import CableStickerGeneratorModal from './CableStickerGeneratorModal';
 import QuickPISEncoderModal from './QuickPISEncoderModal';
 import ConfirmModal from './ConfirmModal';
 import { Card } from './ui/Surface';
+import { getCategoryIcon, getCategoryColor } from '../constants';
 import {
   Building2,
   Plus,
@@ -34,13 +35,15 @@ import {
   Building,
   UserCheck,
   Sparkles,
-  Cloud,
-  CloudOff,
   ChevronRight,
   ChevronDown,
   Layers,
   Folder,
-  Cable
+  Cable,
+  MapPin,
+  Check,
+  X,
+  Eye
 } from 'lucide-react';
 import {
   BarChart,
@@ -78,40 +81,16 @@ const CONDITION_BADGES: Record<PropertyCondition, { bg: string; text: string; bo
   'Disposed': { bg: 'bg-zinc-100', text: 'text-zinc-600', border: 'border-zinc-300', icon: Archive }
 };
 
-const getCategoryIcon = (category: string) => {
-  switch (category) {
-    case 'IT & Digital Equipment':
-      return '💻';
-    case 'School Furniture & Fixtures':
-      return '🪑';
-    case 'Audio-Visual & Electronics':
-      return '📺';
-    case 'Appliances & HVAC':
-      return '❄️';
-    case 'Security & Safety Equipment':
-      return '🧯';
-    case 'Laboratory & Science Equipment':
-      return '🔬';
-    case 'Sports & Physical Education':
-      return '⚽';
-    case 'Musical Instruments':
-      return '🎸';
-    case 'Agricultural & Industrial Arts':
-      return '🛠️';
-    default:
-      return '📦';
-  }
-};
-
-export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
-  const [items, setItems] = useState<PropertyItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefreshParent }) => {
+  const [items, setItems] = useState<PropertyItem[]>(() => propertyStorage.getCachedPropertyItems());
+  const [isLoading, setIsLoading] = useState(() => propertyStorage.getCachedPropertyItems().length === 0);
   const [isCloudConnected, setIsCloudConnected] = useState<boolean | null>(null);
   const [activeTab, setActiveTab] = useState<'registry' | 'reports' | 'analytics'>('registry');
 
   // Search & Filter State
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [selectedLocation, setSelectedLocation] = useState<string>('All');
   const [selectedCondition, setSelectedCondition] = useState<string>('All');
   const [selectedFundSource, setSelectedFundSource] = useState<string>('All');
   const [selectedType, setSelectedType] = useState<string>('All');
@@ -120,6 +99,39 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<'name' | 'propertyNumber' | 'totalValue' | 'date'>('name');
   const [sortAsc, setSortAsc] = useState(true);
+
+  // DepEd Inventory Report State (Location / Cabinet generation)
+  const [reportLocation, setReportLocation] = useState<string>('All');
+  const [reportGrouping, setReportGrouping] = useState<'by-location' | 'flat'>('by-location');
+  const [reportSearchTerm, setReportSearchTerm] = useState<string>('');
+
+  // Searchable Location / Cabinet Dropdown State
+  const [isReportLocDropdownOpen, setIsReportLocDropdownOpen] = useState(false);
+  const [reportLocSearchQuery, setReportLocSearchQuery] = useState('');
+  const reportLocDropdownRef = useRef<HTMLDivElement>(null);
+  const reportLocInputRef = useRef<HTMLInputElement>(null);
+
+  // Close searchable dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (reportLocDropdownRef.current && !reportLocDropdownRef.current.contains(e.target as Node)) {
+        setIsReportLocDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Auto-focus search input when dropdown opens
+  useEffect(() => {
+    if (isReportLocDropdownOpen) {
+      setTimeout(() => {
+        reportLocInputRef.current?.focus();
+      }, 50);
+    } else {
+      setReportLocSearchQuery('');
+    }
+  }, [isReportLocDropdownOpen]);
 
   // Modals
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -141,27 +153,43 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
     message: '',
     onConfirm: () => {}
   });
+  const [isPrintReportModalOpen, setIsPrintReportModalOpen] = useState(false);
+
+  // Close report preview modal on Escape key
+  useEffect(() => {
+    if (!isPrintReportModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsPrintReportModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPrintReportModalOpen]);
 
   // Selected for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // Load properties from Cloud (Supabase)
-  const loadData = async (showSpinner = true) => {
-    if (showSpinner) setIsLoading(true);
+  // Load properties (uses cache when available; forceRefresh only when explicitly requested)
+  const loadData = async (showSpinner = false, forceRefresh = false) => {
+    if (showSpinner && items.length === 0) setIsLoading(true);
     try {
-      const data = await propertyStorage.getPropertyItems();
+      const data = await propertyStorage.getPropertyItems(forceRefresh);
       setItems(data);
       setIsCloudConnected(Boolean(supabase && typeof supabase.from === 'function'));
     } catch (e) {
       console.error('Failed to load property items from cloud', e);
       setIsCloudConnected(false);
     } finally {
-      if (showSpinner) setIsLoading(false);
+      setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadData(true);
+    // If cache is empty, query Supabase on first mount; otherwise use cached data with zero delay!
+    if (items.length === 0) {
+      loadData(true, false);
+    }
 
     // Subscribe to realtime database changes from Supabase
     if (supabase && typeof supabase.channel === 'function') {
@@ -171,7 +199,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
           'postgres_changes',
           { event: '*', schema: 'public', table: 'property_items' },
           () => {
-            loadData(false);
+            loadData(false, true); // Silent background refresh when DB changes
           }
         )
         .subscribe();
@@ -185,6 +213,17 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
   // Compute statistics
   const stats = useMemo(() => {
     return propertyStorage.calculatePropertyStats(items);
+  }, [items]);
+
+  // Distinct locations from property items
+  const distinctLocations = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach(i => {
+      if (i.location?.trim()) set.add(i.location.trim());
+    });
+    return Array.from(set).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+    );
   }, [items]);
 
   // Filter and sort items
@@ -202,11 +241,12 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
         item.category.toLowerCase().includes(q);
 
       const matchesCat = selectedCategory === 'All' || item.category === selectedCategory;
+      const matchesLoc = selectedLocation === 'All' || item.location === selectedLocation;
       const matchesCond = selectedCondition === 'All' || item.condition === selectedCondition;
       const matchesFund = selectedFundSource === 'All' || item.sourceOfFund === selectedFundSource;
       const matchesType = selectedType === 'All' || item.inventoryType === selectedType;
 
-      return matchesSearch && matchesCat && matchesCond && matchesFund && matchesType;
+      return matchesSearch && matchesCat && matchesLoc && matchesCond && matchesFund && matchesType;
     }).sort((a, b) => {
       let result = 0;
       if (sortField === 'name') result = a.name.localeCompare(b.name);
@@ -215,7 +255,47 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
       else if (sortField === 'date') result = (a.acquisitionDate || '').localeCompare(b.acquisitionDate || '');
       return sortAsc ? result : -result;
     });
-  }, [items, searchTerm, selectedCategory, selectedCondition, selectedFundSource, selectedType, sortField, sortAsc]);
+  }, [items, searchTerm, selectedCategory, selectedLocation, selectedCondition, selectedFundSource, selectedType, sortField, sortAsc]);
+
+  // Filtered Items specifically for DepEd Inventory Report by location/cabinet and report search
+  const reportFilteredItems = useMemo(() => {
+    return items.filter(item => {
+      const locMatch = reportLocation === 'All' || (item.location || '').trim().toLowerCase() === reportLocation.trim().toLowerCase();
+      const q = reportSearchTerm.toLowerCase().trim();
+      const searchMatch = !q ||
+        item.name.toLowerCase().includes(q) ||
+        item.propertyNumber.toLowerCase().includes(q) ||
+        (item.pisCode && item.pisCode.toLowerCase().includes(q)) ||
+        (item.serialNumber && item.serialNumber.toLowerCase().includes(q)) ||
+        item.location.toLowerCase().includes(q) ||
+        item.custodian.toLowerCase().includes(q) ||
+        item.category.toLowerCase().includes(q);
+      return locMatch && searchMatch;
+    }).sort((a, b) => a.name.localeCompare(b.name));
+  }, [items, reportLocation, reportSearchTerm]);
+
+  // Group items by location/cabinet for report generation
+  const reportLocationsGrouped = useMemo(() => {
+    const map = new Map<string, PropertyItem[]>();
+    reportFilteredItems.forEach(item => {
+      const loc = (item.location || 'General Storage / Unassigned').trim();
+      if (!map.has(loc)) {
+        map.set(loc, []);
+      }
+      map.get(loc)!.push(item);
+    });
+    return Array.from(map.entries()).sort(([a], [b]) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+    );
+  }, [reportFilteredItems]);
+
+  const reportTotalQuantity = useMemo(() => {
+    return reportFilteredItems.reduce((sum, item) => sum + item.quantity, 0);
+  }, [reportFilteredItems]);
+
+  const reportTotalValuation = useMemo(() => {
+    return reportFilteredItems.reduce((sum, item) => sum + (item.totalValue || item.quantity * item.unitValue), 0);
+  }, [reportFilteredItems]);
 
   // Handlers
   const handleSaveItem = async (item: PropertyItem) => {
@@ -278,33 +358,148 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
     setSelectedIds(next);
   };
 
+  // Scope and calculations for Report Modal Preview
+  const isReportTab = activeTab === 'reports';
+  const modalItemsToPreview = isReportTab ? reportFilteredItems : filteredItems;
+  const modalIsSpecificLocation = isReportTab && reportLocation !== 'All';
+  const modalIsGrouped = isReportTab ? (reportGrouping === 'by-location' && !modalIsSpecificLocation) : false;
+
+  const modalTotalQuantity = useMemo(() => {
+    return modalItemsToPreview.reduce((sum, item) => sum + item.quantity, 0);
+  }, [modalItemsToPreview]);
+
+  const modalTotalValuation = useMemo(() => {
+    return modalItemsToPreview.reduce((sum, item) => sum + (item.totalValue || item.quantity * item.unitValue), 0);
+  }, [modalItemsToPreview]);
+
   const handlePrintOfficialReport = () => {
-    const printWindow = window.open('', '', 'width=1000,height=800');
+    const printWindow = window.open('', '', 'width=1100,height=850');
     if (!printWindow) return;
 
-    const rowsHtml = filteredItems.map((item, idx) => `
-      <tr>
-        <td style="text-align: center;">${idx + 1}</td>
-        <td style="font-family: monospace; font-weight: bold;">${item.propertyNumber}</td>
-        <td>
-          <strong>${item.name}</strong>
-          ${item.description ? `<br><small style="color: #4b5563;">${item.description}</small>` : ''}
-          ${item.serialNumber ? `<br><small style="color: #6b7280; font-family: monospace;">SN: ${item.serialNumber}</small>` : ''}
-        </td>
-        <td>${item.category}</td>
-        <td style="text-align: center;">${item.quantity} ${item.unit}</td>
-        <td style="text-align: right;">₱ ${item.unitValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-        <td style="text-align: right; font-weight: bold;">₱ ${(item.totalValue || item.quantity * item.unitValue).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-        <td>${item.location}</td>
-        <td><strong>${item.custodian}</strong></td>
-        <td style="text-align: center;">${item.condition}</td>
-        <td>${item.sourceOfFund}</td>
-        <td style="font-family: monospace;">${item.parNumber || 'N/A'}</td>
-      </tr>
-    `).join('');
+    const itemsToPrint = isReportTab ? reportFilteredItems : filteredItems;
+    const isSpecificLocation = isReportTab && reportLocation !== 'All';
+    const isGrouped = isReportTab ? (reportGrouping === 'by-location' && !isSpecificLocation) : false;
 
-    const grandTotal = filteredItems.reduce((sum, item) => sum + (item.totalValue || item.quantity * item.unitValue), 0);
-    const grandQuantity = filteredItems.reduce((sum, item) => sum + item.quantity, 0);
+    let tablesHtml = '';
+
+    if (isGrouped) {
+      tablesHtml = reportLocationsGrouped.map(([locName, locItems]) => {
+        const locTotal = locItems.reduce((sum, item) => sum + (item.totalValue || item.quantity * item.unitValue), 0);
+        const locQty = locItems.reduce((sum, item) => sum + item.quantity, 0);
+
+        const rows = locItems.map((item, idx) => `
+          <tr>
+            <td style="text-align: center;">${idx + 1}</td>
+            <td style="font-family: monospace; font-weight: bold; white-space: nowrap;">${item.propertyNumber}</td>
+            <td style="font-family: monospace; font-weight: bold; font-size: 10px; background: #fffbeb; white-space: nowrap; text-align: center;">${item.pisCode || '—'}</td>
+            <td>
+              <strong>${item.name}</strong>
+              ${item.description ? `<br><small style="color: #4b5563;">${item.description}</small>` : ''}
+              ${item.serialNumber ? `<br><small style="color: #6b7280; font-family: monospace;">SN: ${item.serialNumber}</small>` : ''}
+            </td>
+            <td>${item.category}</td>
+            <td style="text-align: center; font-weight: bold;">${item.quantity} ${item.unit}</td>
+            <td style="text-align: right;">₱ ${item.unitValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+            <td style="text-align: right; font-weight: bold; color: #047857;">₱ ${(item.totalValue || item.quantity * item.unitValue).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+            <td><strong>${item.custodian}</strong></td>
+            <td style="text-align: center;">${item.condition}</td>
+            <td>${item.sourceOfFund}</td>
+            <td style="font-family: monospace;">${item.parNumber || 'N/A'}</td>
+          </tr>
+        `).join('');
+
+        return `
+          <div class="location-group-block">
+            <div class="location-header-banner">
+              <span class="location-title">STORAGE CABINET / LOCATION: <strong>${locName}</strong></span>
+              <span class="location-meta">${locItems.length} article(s) • ${locQty} physical units • Subtotal: <strong>₱ ${locTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong></span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 25px; text-align: center;">#</th>
+                  <th style="width: 110px;">Property No.</th>
+                  <th style="width: 95px; text-align: center;">PIS Sticker</th>
+                  <th>Article & Specifications</th>
+                  <th style="width: 120px;">Category</th>
+                  <th style="width: 55px; text-align: center;">Qty</th>
+                  <th style="width: 85px; text-align: right;">Unit Cost</th>
+                  <th style="width: 95px; text-align: right;">Total Cost</th>
+                  <th style="width: 120px;">Accountable Officer</th>
+                  <th style="width: 75px; text-align: center;">Condition</th>
+                  <th style="width: 100px;">Fund Source</th>
+                  <th style="width: 80px;">PAR/ICS</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+                <tr class="loc-subtotal-row">
+                  <td colspan="5" style="text-align: right; font-weight: bold; text-transform: uppercase;">Subtotal for ${locName}:</td>
+                  <td style="text-align: center; font-weight: bold;">${locQty}</td>
+                  <td></td>
+                  <td style="text-align: right; font-weight: bold; color: #065f46;">₱ ${locTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                  <td colspan="4"></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        `;
+      }).join('');
+    } else {
+      const rows = itemsToPrint.map((item, idx) => `
+        <tr>
+          <td style="text-align: center;">${idx + 1}</td>
+          <td style="font-family: monospace; font-weight: bold; white-space: nowrap;">${item.propertyNumber}</td>
+          <td style="font-family: monospace; font-weight: bold; font-size: 10px; background: #fffbeb; white-space: nowrap; text-align: center;">${item.pisCode || '—'}</td>
+          <td>
+            <strong>${item.name}</strong>
+            ${item.description ? `<br><small style="color: #4b5563;">${item.description}</small>` : ''}
+            ${item.serialNumber ? `<br><small style="color: #6b7280; font-family: monospace;">SN: ${item.serialNumber}</small>` : ''}
+          </td>
+          <td>${item.category}</td>
+          <td style="text-align: center; font-weight: bold;">${item.quantity} ${item.unit}</td>
+          <td style="text-align: right;">₱ ${item.unitValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+          <td style="text-align: right; font-weight: bold; color: #047857;">₱ ${(item.totalValue || item.quantity * item.unitValue).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+          <td>${item.location}</td>
+          <td><strong>${item.custodian}</strong></td>
+          <td style="text-align: center;">${item.condition}</td>
+          <td>${item.sourceOfFund}</td>
+          <td style="font-family: monospace;">${item.parNumber || 'N/A'}</td>
+        </tr>
+      `).join('');
+
+      tablesHtml = `
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 25px; text-align: center;">#</th>
+              <th style="width: 110px;">Property No.</th>
+              <th style="width: 95px; text-align: center;">PIS Sticker</th>
+              <th>Article & Specifications</th>
+              <th style="width: 120px;">Category</th>
+              <th style="width: 55px; text-align: center;">Qty</th>
+              <th style="width: 85px; text-align: right;">Unit Cost</th>
+              <th style="width: 95px; text-align: right;">Total Cost</th>
+              <th style="width: 115px;">Location / Cabinet</th>
+              <th style="width: 120px;">Accountable Officer</th>
+              <th style="width: 75px; text-align: center;">Condition</th>
+              <th style="width: 100px;">Fund Source</th>
+              <th style="width: 80px;">PAR/ICS</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      `;
+    }
+
+    const grandTotal = itemsToPrint.reduce((sum, item) => sum + (item.totalValue || item.quantity * item.unitValue), 0);
+    const grandQuantity = itemsToPrint.reduce((sum, item) => sum + item.quantity, 0);
+
+    const locationScopeTitle = isSpecificLocation
+      ? `CABINET / STORAGE LOCATION: ${reportLocation}`
+      : (isGrouped ? `ALL LOCATIONS & CABINETS (${reportLocationsGrouped.length} SECTIONS)` : 'ALL PROPERTY INVENTORY ARTICLES');
 
     printWindow.document.write(`
       <!DOCTYPE html>
@@ -314,76 +509,155 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
         <style>
           @page {
             size: landscape;
-            margin: 10mm;
+            margin: 14mm 10mm 14mm 10mm;
+            @top-left {
+              content: "SYSTEM GENERATED DOCUMENT • INTEGRATED LABORATORY EQUIPMENT MANAGEMENT SYSTEM (I-LEMS)";
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 8pt;
+              font-weight: 700;
+              color: #1e3a8a;
+            }
+            @top-right {
+              content: "Page " counter(page) " of " counter(pages);
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 8pt;
+              font-weight: 700;
+              color: #1e3a8a;
+            }
+            @bottom-left {
+              content: "Integrated Laboratory Equipment Management System (I-LEMS) • Developed by Fitz Jyro Calisnao, through the vision of Jong Bok Chun, KOICA Volunteer";
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 7.5pt;
+              color: #475569;
+            }
+            @bottom-right {
+              content: "© 2025-${new Date().getFullYear()}. Leon NHS - Science Laboratory";
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 7.5pt;
+              color: #475569;
+            }
           }
-          body {
+          html, body {
+            margin: 0;
+            padding: 0;
+            background: #ffffff;
             font-family: Arial, Helvetica, sans-serif;
             color: #111827;
-            font-size: 11px;
-            margin: 0;
-            padding: 15px;
+            font-size: 10px;
+            height: auto;
           }
           .header {
             text-align: center;
-            margin-bottom: 20px;
+            margin-bottom: 8px;
             border-bottom: 2px solid #1e3a8a;
-            padding-bottom: 12px;
+            padding-bottom: 8px;
           }
-          .header h4 { margin: 0; font-size: 11px; font-weight: normal; color: #4b5563; }
-          .header h3 { margin: 2px 0; font-size: 13px; font-weight: bold; color: #1e3a8a; }
-          .header h2 { margin: 3px 0; font-size: 16px; font-weight: 900; color: #991b1b; }
-          .header h1 { margin: 8px 0 2px 0; font-size: 15px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
+          .header h4 { margin: 0; font-size: 9.5px; font-weight: normal; color: #4b5563; }
+          .header h3 { margin: 1px 0; font-size: 11px; font-weight: bold; color: #1e3a8a; }
+          .header h2 { margin: 2px 0; font-size: 13.5px; font-weight: 900; color: #991b1b; }
+          .header h1 { margin: 4px 0 2px 0; font-size: 12.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
+          .location-scope-banner {
+            display: inline-block;
+            background: #eff6ff;
+            color: #1e40af;
+            border: 1px solid #bfdbfe;
+            padding: 2.5px 10px;
+            border-radius: 4px;
+            font-size: 10.5px;
+            font-weight: bold;
+            margin-top: 3px;
+            text-transform: uppercase;
+          }
           .meta {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 12px;
-            font-size: 11px;
+            align-items: center;
+            margin-bottom: 10px;
+            font-size: 9.5px;
+            background: #f8fafc;
+            padding: 5px 8px;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+          }
+          .location-group-block {
+            margin-bottom: 14px;
+            page-break-inside: avoid;
+            break-inside: avoid;
+          }
+          .location-header-banner {
+            background: #1e3a8a;
+            color: white;
+            padding: 4px 8px;
+            font-size: 10px;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-radius: 4px 4px 0 0;
+          }
+          .location-title {
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+          }
+          .location-meta {
+            font-size: 9px;
+            font-weight: normal;
+            opacity: 0.95;
           }
           table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 25px;
+            margin-bottom: 6px;
           }
           th, td {
             border: 1px solid #94a3b8;
-            padding: 6px 8px;
+            padding: 4px 6px;
             vertical-align: top;
           }
           th {
             background-color: #f1f5f9;
             font-weight: 800;
             text-align: left;
-            font-size: 10px;
+            font-size: 9px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.3px;
+          }
+          tr {
+            page-break-inside: avoid;
+            break-inside: avoid;
           }
           tr:nth-child(even) td {
             background-color: #f8fafc;
           }
-          .grand-total {
-            background-color: #e2e8f0 !important;
+          .loc-subtotal-row {
+            background-color: #ecfdf5 !important;
             font-weight: bold;
           }
-          .signatories {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 30px;
-            margin-top: 40px;
+          .grand-total-card {
+            background: #f1f5f9;
+            border: 2px solid #1e3a8a;
+            border-radius: 4px;
+            padding: 7px 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 10px;
+            margin-bottom: 0;
             page-break-inside: avoid;
+            break-inside: avoid;
+            page-break-after: avoid;
+            break-after: avoid;
           }
-          .sig-box {
-            text-align: center;
+          .grand-total-label {
+            font-size: 10.5px;
+            font-weight: 800;
+            color: #1e3a8a;
+            text-transform: uppercase;
           }
-          .sig-line {
-            border-top: 1px solid #000;
-            margin-top: 50px;
-            padding-top: 5px;
-            font-weight: bold;
-            font-size: 12px;
-          }
-          .sig-title {
-            font-size: 10px;
-            color: #4b5563;
+          .grand-total-val {
+            font-size: 13px;
+            font-weight: 900;
+            color: #047857;
           }
         </style>
       </head>
@@ -394,43 +668,25 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
           <h4>Region VI - Western Visayas • Division of Iloilo</h4>
           <h2>LEON NATIONAL HIGH SCHOOL</h2>
           <h1>Report on the Physical Count of Property, Plant & Equipment (RPCPPE)</h1>
-          <p style="margin: 3px 0 0 0; font-size: 11px; color: #4b5563;">General School Property Inventory (Non-Laboratory Assets)</p>
+          <div class="location-scope-banner">${locationScopeTitle}</div>
         </div>
 
         <div class="meta">
-          <div><strong>Category Filter:</strong> ${selectedCategory} | <strong>Condition:</strong> ${selectedCondition}</div>
+          <div><strong>Location / Scope:</strong> ${isSpecificLocation ? `Cabinet / Storage: ${reportLocation}` : (isGrouped ? 'All Cabinets (Grouped by Storage Location)' : 'All Inventory Articles')}</div>
+          <div><strong>Articles Count:</strong> ${itemsToPrint.length} | <strong>Total Physical Units:</strong> ${grandQuantity}</div>
           <div><strong>Date Generated:</strong> ${new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
         </div>
 
-        <table>
-          <thead>
-            <tr>
-              <th style="width: 30px; text-align: center;">#</th>
-              <th style="width: 120px;">Property No.</th>
-              <th>Article & Description</th>
-              <th style="width: 130px;">Category</th>
-              <th style="width: 60px; text-align: center;">Qty</th>
-              <th style="width: 90px; text-align: right;">Unit Cost</th>
-              <th style="width: 100px; text-align: right;">Total Cost</th>
-              <th style="width: 120px;">Location</th>
-              <th style="width: 130px;">Accountable Officer</th>
-              <th style="width: 80px; text-align: center;">Condition</th>
-              <th style="width: 110px;">Fund Source</th>
-              <th style="width: 90px;">PAR/ICS</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rowsHtml}
-            <tr class="grand-total">
-              <td colspan="4" style="text-align: right; text-transform: uppercase;"><strong>Grand Totals:</strong></td>
-              <td style="text-align: center;"><strong>${grandQuantity}</strong></td>
-              <td></td>
-              <td style="text-align: right;"><strong>₱ ${grandTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong></td>
-              <td colspan="5"></td>
-            </tr>
-          </tbody>
-        </table>
+        ${tablesHtml}
 
+        <div class="grand-total-card">
+          <div class="grand-total-label">
+            REPORT GRAND TOTAL (${itemsToPrint.length} Articles • ${grandQuantity} Physical Units${isSpecificLocation ? ` in ${reportLocation}` : ''})
+          </div>
+          <div class="grand-total-val">
+            ₱ ${grandTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+          </div>
+        </div>
 
         <script>
           window.onload = function() {
@@ -441,6 +697,11 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
       </html>
     `);
     printWindow.document.close();
+  };
+
+  const handleTriggerPrintReport = () => {
+    setIsPrintReportModalOpen(true);
+    handlePrintOfficialReport();
   };
 
   // Group filtered items by category for collapsible view
@@ -872,6 +1133,15 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
 
       {/* Main Container */}
       <div className="bg-white rounded-md border border-gray-200 shadow-sm overflow-hidden">
+        {/* Informative Banner */}
+        <div className="bg-amber-50 border-b border-amber-200/80 px-4 py-2.5 md:px-6 flex items-center gap-2.5 text-xs">
+          <Tag className="w-4 h-4 text-amber-700 flex-shrink-0" />
+          <div className="text-amber-950 min-w-0">
+            <span className="font-bold">Property Inventory (PIS Tagged Assets):</span> Designated for equipment and machinery large and durable enough to carry **Physical Property Stickers (PIS)** — such as microscopes, triple beam balances, hot plates, optical benches, multimeters, and modular science kits.
+            <span className="hidden xl:inline text-amber-800 ml-1">Small items, glasswares, and consumables without stickers belong in <strong>Laboratory Inventory</strong>.</span>
+          </div>
+        </div>
+
         {/* Navigation Tabs Bar (Row 1) */}
         <div className="px-4 py-3 md:px-6 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gray-50/70">
           <div className="flex items-center space-x-1 sm:space-x-2 overflow-x-auto pb-1 sm:pb-0">
@@ -917,8 +1187,8 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
 
           <div className="flex items-center space-x-2 flex-shrink-0">
             <button
-              onClick={() => loadData(true)}
-              title="Refresh cloud property records"
+              onClick={() => loadData(true, true)}
+              title="Force refresh cloud property records"
               className="p-2 border border-gray-300 rounded-sm bg-white hover:bg-gray-50 text-gray-700 transition-colors shadow-xs"
             >
               <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-blue-600' : ''}`} />
@@ -989,8 +1259,8 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
             )}
 
             <button
-              onClick={handlePrintOfficialReport}
-              title="Print official inventory report"
+              onClick={handleTriggerPrintReport}
+              title="Print official inventory report (Preview in Modal & Print)"
               className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-sm text-xs font-bold transition-colors flex items-center space-x-1.5 shadow-xs whitespace-nowrap"
             >
               <Printer className="w-3.5 h-3.5" />
@@ -1014,7 +1284,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
             {/* Search and Filters Bar */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-center">
               {/* Search input */}
-              <div className="lg:col-span-4 relative">
+              <div className="lg:col-span-3 relative">
                 <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
@@ -1040,6 +1310,22 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
                 </select>
               </div>
 
+              {/* Location Filter */}
+              <div className="lg:col-span-2">
+                <select
+                  value={selectedLocation}
+                  onChange={(e) => setSelectedLocation(e.target.value)}
+                  className="w-full px-3 py-2 text-xs md:text-sm border border-gray-300 rounded-md font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
+                  title="Filter by property location / cabinet"
+                >
+                  <option value="All">All Locations ({items.length})</option>
+                  {distinctLocations.map(loc => {
+                    const count = items.filter(i => i.location === loc).length;
+                    return <option key={loc} value={loc}>{loc} ({count})</option>;
+                  })}
+                </select>
+              </div>
+
               {/* Condition Filter */}
               <div className="lg:col-span-2">
                 <select
@@ -1048,16 +1334,16 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
                   className="w-full px-3 py-2 text-xs md:text-sm border border-gray-300 rounded-md font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
                 >
                   <option value="All">All Conditions</option>
-                  <option value="Serviceable">🟢 Serviceable</option>
-                  <option value="Needs Repair">🟡 Needs Repair</option>
-                  <option value="Unserviceable">🔴 Unserviceable</option>
-                  <option value="For Condemnation">⚫ For Condemnation</option>
-                  <option value="Disposed">⚪ Disposed</option>
+                  <option value="Serviceable">Serviceable</option>
+                  <option value="Needs Repair">Needs Repair</option>
+                  <option value="Unserviceable">Unserviceable</option>
+                  <option value="For Condemnation">For Condemnation</option>
+                  <option value="Disposed">Disposed</option>
                 </select>
               </div>
 
               {/* View Grouping, Layout & Sorting */}
-              <div className="lg:col-span-3 flex items-center justify-start lg:justify-end gap-1.5 flex-wrap">
+              <div className="lg:col-span-2 flex items-center justify-start lg:justify-end gap-1.5 flex-wrap">
                 {/* Grouping Toggle */}
                 <div className="flex border border-gray-300 rounded-sm p-0.5 bg-gray-50">
                   <button
@@ -1229,7 +1515,16 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
                           </button>
 
                           <div className="flex items-center space-x-2">
-                            <span className="text-lg select-none">{getCategoryIcon(group.category)}</span>
+                            <span
+                              className="flex items-center justify-center w-7 h-7 rounded-md border flex-shrink-0 [&>svg]:w-4 [&>svg]:h-4"
+                              style={{
+                                color: getCategoryColor(group.category),
+                                borderColor: `${getCategoryColor(group.category)}40`,
+                                backgroundColor: `${getCategoryColor(group.category)}12`
+                              }}
+                            >
+                              {getCategoryIcon(group.category)}
+                            </span>
                             <h4 className="font-bold text-gray-900 text-sm md:text-base">
                               {group.category}
                             </h4>
@@ -1291,81 +1586,387 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
         {/* Tab 2: DepEd Inventory Report Preview */}
         {activeTab === 'reports' && (
           <div className="p-4 md:p-8 space-y-6">
-            <div className="bg-blue-50/70 border border-blue-200 rounded-md p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div>
-                <h4 className="font-bold text-blue-950 text-sm">Official DepEd Inventory Format (RPCPPE / RPCSP)</h4>
-                <p className="text-xs text-blue-800">
-                  Formatted for Leon National High School property auditing and COA compliance.
-                </p>
+            {/* Top Controls Card (Clean, Institutional Layout with Highlighted Borders) */}
+            <div className="bg-white border-2 border-slate-300 rounded-lg p-5 sm:p-6 shadow-sm space-y-4">
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-900 border border-blue-200 mb-1">
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    DepEd Form RPCPPE / RPCSP
+                  </div>
+                  <h3 className="font-extrabold text-gray-900 text-lg tracking-tight">
+                    Official DepEd Property Inventory Report
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Generate, inspect, and print official inventory sheets filtered or organized by physical cabinets and storage locations.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={() => propertyStorage.exportPropertyCSV(reportFilteredItems)}
+                    className="px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-sm text-xs font-bold transition-all flex items-center space-x-1.5 shadow-xs"
+                    title="Export currently filtered location report to Excel/CSV"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export Location CSV</span>
+                  </button>
+
+                  <button
+                    onClick={handleTriggerPrintReport}
+                    className="px-4 py-2 bg-blue-900 hover:bg-blue-950 text-white rounded-sm text-xs md:text-sm font-bold shadow-xs transition-all flex items-center space-x-2"
+                    title="Print official landscape report for selected location/cabinets"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print Official Report</span>
+                  </button>
+                </div>
               </div>
-              <button
-                onClick={handlePrintOfficialReport}
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-sm text-xs md:text-sm font-bold shadow-md transition-all flex items-center space-x-2"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Print Official Report</span>
-              </button>
+
+              {/* Location / Cabinet Selection & Report Settings Bar */}
+              <div className="bg-gray-50/90 rounded-md p-3.5 border border-gray-300 grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+                {/* Searchable Storage Location / Cabinet Dropdown */}
+                <div className="md:col-span-5 relative" ref={reportLocDropdownRef}>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-600 mb-1">
+                    Storage Location / Cabinet Filter
+                  </label>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setIsReportLocDropdownOpen(prev => !prev)}
+                      className="w-full pl-9 pr-9 py-2 text-xs bg-white text-gray-900 font-bold rounded-sm border border-gray-300 focus:ring-2 focus:ring-blue-500 shadow-2xs flex items-center justify-between text-left transition-all hover:bg-gray-50"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <MapPin className="w-4 h-4 text-blue-600 flex-shrink-0 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <span className="truncate">
+                          {reportLocation === 'All' ? (
+                            <span>All Storage Locations & Cabinets ({distinctLocations.length} locations • {items.length} items)</span>
+                          ) : (
+                            <span>
+                              {reportLocation} ({items.filter(i => (i.location || '').trim().toLowerCase() === reportLocation.trim().toLowerCase()).length} articles)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+
+                      <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                        {reportLocation !== 'All' && (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setReportLocation('All');
+                            }}
+                            className="p-0.5 text-gray-400 hover:text-red-600 hover:bg-gray-100 rounded transition-colors"
+                            title="Reset to All Locations"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </span>
+                        )}
+                        <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform duration-200 ${isReportLocDropdownOpen ? 'rotate-180 text-blue-600' : ''}`} />
+                      </div>
+                    </button>
+
+                    {/* Searchable Dropdown Popover */}
+                    {isReportLocDropdownOpen && (
+                      <div className="absolute z-50 left-0 right-0 mt-1.5 bg-white border border-gray-200 rounded-md shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                        {/* Search Input Box */}
+                        <div className="p-2 border-b border-gray-100 bg-gray-50">
+                          <div className="relative">
+                            <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            <input
+                              ref={reportLocInputRef}
+                              type="text"
+                              value={reportLocSearchQuery}
+                              onChange={(e) => setReportLocSearchQuery(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Escape') {
+                                  setIsReportLocDropdownOpen(false);
+                                }
+                              }}
+                              placeholder="Search cabinet or room (e.g. Cabinet 1)..."
+                              className="w-full pl-8 pr-7 py-1.5 text-xs bg-white text-gray-900 rounded border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                            />
+                            {reportLocSearchQuery && (
+                              <button
+                                type="button"
+                                onClick={() => setReportLocSearchQuery('')}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* List of Locations */}
+                        <div className="max-h-60 overflow-y-auto divide-y divide-gray-50 text-xs">
+                          {/* "All Storage Locations" option */}
+                          {(!reportLocSearchQuery || 'all storage locations & cabinets'.includes(reportLocSearchQuery.toLowerCase())) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setReportLocation('All');
+                                setIsReportLocDropdownOpen(false);
+                              }}
+                              className={`w-full text-left px-3.5 py-2.5 flex items-center justify-between gap-2 transition-colors ${
+                                reportLocation === 'All'
+                                  ? 'bg-blue-50 text-blue-900 font-bold'
+                                  : 'text-gray-800 hover:bg-gray-50 font-medium'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <div className="w-6 h-6 rounded bg-blue-100 text-blue-700 flex items-center justify-center flex-shrink-0">
+                                  <Layers className="w-3.5 h-3.5" />
+                                </div>
+                                <div>
+                                  <div className="truncate font-bold">All Storage Locations & Cabinets</div>
+                                  <div className="text-[10.5px] text-gray-500">
+                                    {distinctLocations.length} locations • {items.length} items
+                                  </div>
+                                </div>
+                              </div>
+                              {reportLocation === 'All' && (
+                                <Check className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                              )}
+                            </button>
+                          )}
+
+                          {/* Specific Locations / Cabinets */}
+                          {distinctLocations
+                            .filter(loc => !reportLocSearchQuery || loc.toLowerCase().includes(reportLocSearchQuery.toLowerCase().trim()))
+                            .map(loc => {
+                              const count = items.filter(i => (i.location || '').trim().toLowerCase() === loc.trim().toLowerCase()).length;
+                              const isSelected = reportLocation.trim().toLowerCase() === loc.trim().toLowerCase();
+                              const isCabinet = /^cabinet\s*\d+/i.test(loc);
+
+                              return (
+                                <button
+                                  key={loc}
+                                  type="button"
+                                  onClick={() => {
+                                    setReportLocation(loc);
+                                    setIsReportLocDropdownOpen(false);
+                                  }}
+                                  className={`w-full text-left px-3.5 py-2 flex items-center justify-between gap-2 transition-colors ${
+                                    isSelected
+                                      ? 'bg-blue-50 text-blue-900 font-bold'
+                                      : 'text-gray-800 hover:bg-gray-50 font-medium'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <MapPin className={`w-3.5 h-3.5 flex-shrink-0 ${isCabinet ? 'text-amber-600' : 'text-blue-500'}`} />
+                                    <span className="truncate">{loc}</span>
+                                    {isCabinet && (
+                                      <span className="text-[9.5px] font-bold px-1.5 py-0.2 bg-amber-100 text-amber-800 rounded border border-amber-200">
+                                        Cabinet
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-2 flex-shrink-0">
+                                    <span className="text-[10.5px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded font-mono">
+                                      {count} article{count === 1 ? '' : 's'}
+                                    </span>
+                                    {isSelected && (
+                                      <Check className="w-4 h-4 text-blue-600" />
+                                    )}
+                                  </div>
+                                </button>
+                              );
+                            })}
+
+                          {distinctLocations.filter(loc => loc.toLowerCase().includes(reportLocSearchQuery.toLowerCase().trim())).length === 0 && reportLocSearchQuery && (
+                            <div className="p-4 text-center text-xs text-gray-400">
+                              No storage locations or cabinets found matching "{reportLocSearchQuery}".
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Footer hint */}
+                        <div className="p-1.5 border-t border-gray-100 bg-gray-50/80 text-[10px] text-gray-500 flex items-center justify-between px-3">
+                          <span>{distinctLocations.length} locations available</span>
+                          <span className="text-gray-400">Esc to close</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Grouping Style (only active when All Locations is selected) */}
+                <div className="md:col-span-4">
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-600 mb-1">
+                    Report Grouping Format
+                  </label>
+                  <div className="flex items-center gap-1 bg-gray-200/70 p-1 rounded-sm border border-gray-300">
+                    <button
+                      type="button"
+                      onClick={() => setReportGrouping('by-location')}
+                      className={`flex-1 py-1 px-2 text-[11px] font-bold rounded-xs transition-colors flex items-center justify-center gap-1 ${
+                        reportGrouping === 'by-location'
+                          ? 'bg-white text-blue-950 shadow-xs'
+                          : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
+                      }`}
+                    >
+                      <Layers className="w-3 h-3" />
+                      <span>By Location / Cabinet</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReportGrouping('flat')}
+                      className={`flex-1 py-1 px-2 text-[11px] font-bold rounded-xs transition-colors flex items-center justify-center gap-1 ${
+                        reportGrouping === 'flat'
+                          ? 'bg-white text-blue-950 shadow-xs'
+                          : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
+                      }`}
+                    >
+                      <ListIcon className="w-3 h-3" />
+                      <span>Flat List</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Search in Report */}
+                <div className="md:col-span-3">
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-600 mb-1">
+                    Search Articles
+                  </label>
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      placeholder="Search in report..."
+                      value={reportSearchTerm}
+                      onChange={(e) => setReportSearchTerm(e.target.value)}
+                      className="w-full pl-8 pr-2 py-1.5 text-xs bg-white text-gray-900 rounded-sm border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-2xs font-medium"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick Filter Location Pills (Using SVG Icons, No Emojis) */}
+              <div className="flex items-center gap-1.5 flex-wrap pt-1 text-[11px]">
+                <span className="text-gray-500 font-bold text-[10px] uppercase mr-1">Quick Select:</span>
+                <button
+                  type="button"
+                  onClick={() => setReportLocation('All')}
+                  className={`px-3 py-1 rounded-full text-[11px] font-bold border transition-colors inline-flex items-center gap-1.5 ${
+                    reportLocation === 'All'
+                      ? 'bg-blue-900 text-white border-blue-900 shadow-xs'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400 font-medium'
+                  }`}
+                >
+                  <Layers className={`w-3.5 h-3.5 flex-shrink-0 ${reportLocation === 'All' ? 'text-white' : 'text-blue-600'}`} />
+                  <span>All Cabinets</span>
+                  <span className={reportLocation === 'All' ? 'text-blue-200 font-normal' : 'text-gray-500 font-normal'}>({items.length})</span>
+                </button>
+                {distinctLocations.slice(0, 6).map(loc => {
+                  const count = items.filter(i => (i.location || '').trim() === loc.trim()).length;
+                  const isSelected = reportLocation === loc;
+                  return (
+                    <button
+                      key={loc}
+                      type="button"
+                      onClick={() => setReportLocation(loc)}
+                      className={`px-3 py-1 rounded-full text-[11px] font-bold border transition-colors truncate max-w-[200px] inline-flex items-center gap-1.5 ${
+                        isSelected
+                          ? 'bg-blue-900 text-white border-blue-900 shadow-xs'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400 font-medium'
+                      }`}
+                      title={loc}
+                    >
+                      <MapPin className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-white' : 'text-blue-600'}`} />
+                      <span className="truncate">{loc}</span>
+                      <span className={isSelected ? 'text-blue-200 font-normal' : 'text-gray-500 font-normal'}>({count})</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            {/* Official Report Card preview */}
-            <div className="border border-gray-300 rounded-md p-6 bg-white shadow-sm space-y-4">
-              <div className="text-center pb-4 border-b-2 border-blue-900">
-                <p className="text-xs text-gray-500 uppercase font-semibold">Republic of the Philippines • Department of Education</p>
-                <h3 className="text-sm font-bold text-blue-900">Region VI - Western Visayas • Division of Iloilo</h3>
-                <h2 className="text-lg font-black text-red-800 mt-0.5">LEON NATIONAL HIGH SCHOOL</h2>
-                <h1 className="text-base font-extrabold text-gray-900 mt-2 tracking-wide uppercase">
-                  Report on the Physical Count of Property, Plant & Equipment (RPCPPE)
-                </h1>
-                <p className="text-xs text-gray-500">As of {new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+            {/* Scope Summary Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-white border border-gray-200 p-3.5 rounded-md shadow-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">Report Scope</span>
+                <div className="font-extrabold text-blue-900 text-sm mt-0.5 truncate" title={reportLocation === 'All' ? 'All Storage Locations' : reportLocation}>
+                  {reportLocation === 'All' ? (
+                    <span>All ({distinctLocations.length} Cabinets/Rooms)</span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 truncate">
+                      <MapPin className="w-3.5 h-3.5 text-blue-600 flex-shrink-0 inline" />
+                      <span className="truncate">{reportLocation}</span>
+                    </span>
+                  )}
+                </div>
               </div>
 
-              {/* Table */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="bg-gray-100 text-gray-700 border-y border-gray-300">
-                      <th className="p-2 border border-gray-300 text-center w-8">#</th>
-                      <th className="p-2 border border-gray-300">Property No.</th>
-                      <th className="p-2 border border-gray-300">Article / Description</th>
-                      <th className="p-2 border border-gray-300">Category</th>
-                      <th className="p-2 border border-gray-300 text-center">Qty</th>
-                      <th className="p-2 border border-gray-300 text-right">Unit Cost (₱)</th>
-                      <th className="p-2 border border-gray-300 text-right">Total Cost (₱)</th>
-                      <th className="p-2 border border-gray-300">Location</th>
-                      <th className="p-2 border border-gray-300">Accountable Officer</th>
-                      <th className="p-2 border border-gray-300 text-center">Condition</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredItems.map((item, idx) => (
-                      <tr key={item.id} className="border-b border-gray-200">
-                        <td className="p-2 border border-gray-200 text-center">{idx + 1}</td>
-                        <td className="p-2 border border-gray-200 font-mono font-bold text-blue-950">{item.propertyNumber}</td>
-                        <td className="p-2 border border-gray-200 font-semibold">{item.name}</td>
-                        <td className="p-2 border border-gray-200 text-gray-600">{item.category}</td>
-                        <td className="p-2 border border-gray-200 text-center font-bold">{item.quantity} {item.unit}</td>
-                        <td className="p-2 border border-gray-200 text-right">₱ {item.unitValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                        <td className="p-2 border border-gray-200 text-right font-bold text-emerald-800">
-                          ₱ {(item.totalValue || item.quantity * item.unitValue).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="p-2 border border-gray-200">{item.location}</td>
-                        <td className="p-2 border border-gray-200 font-medium">{item.custodian}</td>
-                        <td className="p-2 border border-gray-200 text-center font-semibold">{item.condition}</td>
-                      </tr>
-                    ))}
-                    <tr className="bg-gray-100 font-bold border-t-2 border-gray-400">
-                      <td colSpan={4} className="p-2 border border-gray-300 text-right uppercase">Grand Total:</td>
-                      <td className="p-2 border border-gray-300 text-center">{stats.totalQuantity} units</td>
-                      <td className="p-2 border border-gray-300"></td>
-                      <td className="p-2 border border-gray-300 text-right font-black text-emerald-900">
-                        ₱ {stats.totalValuation.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                      </td>
-                      <td colSpan={3} className="p-2 border border-gray-300"></td>
-                    </tr>
-                  </tbody>
-                </table>
+              <div className="bg-white border border-gray-200 p-3.5 rounded-md shadow-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">Total Articles</span>
+                <div className="font-black text-gray-900 text-lg mt-0.5">
+                  {reportFilteredItems.length} <span className="text-xs font-normal text-gray-500">record{reportFilteredItems.length === 1 ? '' : 's'}</span>
+                </div>
               </div>
 
+              <div className="bg-white border border-gray-200 p-3.5 rounded-md shadow-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">Total Units</span>
+                <div className="font-black text-gray-900 text-lg mt-0.5">
+                  {reportTotalQuantity} <span className="text-xs font-normal text-gray-500">physical units</span>
+                </div>
+              </div>
+
+              <div className="bg-white border border-gray-200 p-3.5 rounded-md shadow-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">Total Scope Valuation</span>
+                <div className="font-black text-emerald-700 text-lg mt-0.5">
+                  ₱ {reportTotalValuation.toLocaleString('en-PH', { maximumFractionDigits: 0 })}
+                </div>
+              </div>
+            </div>
+
+            {/* Report Document Action / Status Card */}
+            <div className="bg-white border-2 border-slate-300 rounded-lg p-6 sm:p-8 text-center shadow-xs">
+              <div className="max-w-xl mx-auto space-y-4">
+                <div className="w-12 h-12 mx-auto rounded-full bg-blue-50 text-blue-900 border border-blue-200 flex items-center justify-center">
+                  <Printer className="w-6 h-6 text-blue-900" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-gray-900 text-base sm:text-lg">
+                    Official DepEd Property Inventory Report Ready
+                  </h4>
+                  <p className="text-xs sm:text-sm text-gray-500 mt-1">
+                    {reportLocation === 'All'
+                      ? `Includes all ${distinctLocations.length} storage locations and cabinets (${reportFilteredItems.length} articles • ${reportTotalQuantity} physical units)`
+                      : `Filtered specifically for ${reportLocation} (${reportFilteredItems.length} articles • ${reportTotalQuantity} physical units)`}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleTriggerPrintReport}
+                    className="px-5 py-2.5 bg-blue-900 hover:bg-blue-950 text-white rounded-md text-xs sm:text-sm font-bold shadow-xs transition-all flex items-center gap-2"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print Official Report</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsPrintReportModalOpen(true)}
+                    className="px-4 py-2.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-md text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 shadow-2xs"
+                  >
+                    <Eye className="w-4 h-4 text-gray-500" />
+                    <span>Preview Document</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => propertyStorage.exportPropertyCSV(reportFilteredItems)}
+                    className="px-4 py-2.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-md text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 shadow-2xs"
+                  >
+                    <Download className="w-4 h-4 text-gray-500" />
+                    <span>Export Location CSV</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1531,6 +2132,292 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = () => {
         onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
         isDestructive={true}
       />
+
+      {/* DepEd Inventory Report Preview Modal with Auto-Print */}
+      {isPrintReportModalOpen && (
+        <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 md:p-6 overflow-hidden animate-in fade-in duration-150">
+          <div className="bg-white rounded-lg shadow-2xl border border-gray-300 w-full max-w-6xl max-h-[94vh] flex flex-col overflow-hidden">
+            {/* Modal Header Toolbar */}
+            <div className="px-5 py-3.5 bg-blue-950 text-white flex items-center justify-between gap-3 border-b border-blue-900 flex-shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <FileSpreadsheet className="w-5 h-5 text-yellow-400 flex-shrink-0" />
+                <div className="min-w-0">
+                  <div className="font-extrabold text-sm sm:text-base text-white truncate flex items-center gap-2">
+                    <span>DepEd Inventory Report Preview</span>
+                    <span className="text-[10px] uppercase font-bold tracking-wider bg-blue-900 text-blue-200 px-2 py-0.5 rounded border border-blue-800">
+                      RPCPPE / RPCSP
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-blue-200 truncate flex items-center gap-1.5 mt-0.5">
+                    <MapPin className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
+                    <span className="font-medium">
+                      Scope: {modalIsSpecificLocation ? `Cabinet / Storage: ${reportLocation}` : (modalIsGrouped ? `All Cabinets (${distinctLocations.length} locations)` : 'All Articles')} • {modalItemsToPreview.length} articles • {modalTotalQuantity} units
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={handlePrintOfficialReport}
+                  className="px-3.5 py-1.5 bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-bold rounded-sm text-xs transition-colors flex items-center gap-1.5 shadow-xs"
+                  title="Trigger print dialog again"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Document</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsPrintReportModalOpen(false)}
+                  className="p-1.5 text-blue-200 hover:text-white hover:bg-blue-900 rounded-sm transition-colors"
+                  title="Close Preview (Esc)"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Document Body (Scrollable paper sheet preview) */}
+            <div className="flex-1 overflow-y-auto p-3 sm:p-6 md:p-8 bg-slate-100">
+              <div className="max-w-5xl mx-auto bg-white border border-gray-300 rounded-md p-6 sm:p-8 shadow-sm space-y-6">
+                {/* Document Header (System Generated Text & Page Numbering Preview) */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-3 border-b-2 border-gray-900 text-xs text-gray-500 gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-black text-[10px] uppercase bg-gray-900 text-white px-2 py-0.5 rounded-xs tracking-wider">
+                      System Generated Document
+                    </span>
+                    <span className="font-extrabold text-blue-900 text-xs tracking-wide">
+                      INTEGRATED LABORATORY EQUIPMENT MANAGEMENT SYSTEM (I-LEMS)
+                    </span>
+                    <span className="text-gray-300 hidden sm:inline">•</span>
+                    <span className="text-[11px] text-gray-600 font-medium">DepEd Form RPCPPE / RPCSP</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] font-mono text-gray-600">
+                    <span className="text-gray-500 hidden md:inline">Leon National High School</span>
+                    <span className="text-gray-300 hidden md:inline">•</span>
+                    <span className="bg-gray-100 border border-gray-300 px-2 py-0.5 rounded text-[11px] font-bold text-gray-700">
+                      Page 1 of 1
+                    </span>
+                  </div>
+                </div>
+
+                <div className="text-center pb-4 border-b-2 border-blue-900">
+                  <p className="text-xs text-gray-500 uppercase font-semibold">Republic of the Philippines • Department of Education</p>
+                  <h3 className="text-sm font-bold text-blue-900">Region VI - Western Visayas • Division of Iloilo</h3>
+                  <h2 className="text-lg font-black text-red-800 mt-0.5">LEON NATIONAL HIGH SCHOOL</h2>
+                  <h1 className="text-base font-extrabold text-gray-900 mt-2 tracking-wide uppercase">
+                    Report on the Physical Count of Property, Plant & Equipment (RPCPPE)
+                  </h1>
+                  <div className="inline-block bg-blue-50 text-blue-900 border border-blue-200 px-3 py-1 rounded-sm text-xs font-bold mt-2">
+                    {modalIsSpecificLocation
+                      ? `STORAGE CABINET / LOCATION: ${reportLocation}`
+                      : (modalIsGrouped ? `ALL STORAGE LOCATIONS & CABINETS (${distinctLocations.length} LOCATIONS)` : 'ALL PROPERTY INVENTORY ARTICLES')}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">As of {new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                </div>
+
+                {/* Grouped by Location / Cabinets */}
+                {modalIsGrouped ? (
+                  <div className="space-y-6">
+                    {reportLocationsGrouped.map(([locName, locItems]) => {
+                      const locTotal = locItems.reduce((sum, item) => sum + (item.totalValue || item.quantity * item.unitValue), 0);
+                      const locQty = locItems.reduce((sum, item) => sum + item.quantity, 0);
+
+                      return (
+                        <div key={locName} className="border border-gray-300 rounded-md overflow-hidden">
+                          {/* Cabinet Header */}
+                          <div className="bg-blue-900 text-white px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                            <div className="flex items-center gap-2">
+                              <MapPin className="w-4 h-4 text-yellow-300 flex-shrink-0" />
+                              <h4 className="font-bold text-sm tracking-wide">{locName}</h4>
+                            </div>
+                            <div className="text-xs text-blue-100 font-mono">
+                              {locItems.length} article(s) • {locQty} unit(s) • Subtotal: <strong className="text-white">₱ {locTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong>
+                            </div>
+                          </div>
+
+                          {/* Cabinet Table */}
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-gray-100 text-gray-700 border-b border-gray-300 font-bold">
+                                  <th className="p-2 border border-gray-300 text-center w-8">#</th>
+                                  <th className="p-2 border border-gray-300 w-28">Property No.</th>
+                                  <th className="p-2 border border-gray-300 w-24">PIS Code</th>
+                                  <th className="p-2 border border-gray-300">Article / Description</th>
+                                  <th className="p-2 border border-gray-300 w-32">Category</th>
+                                  <th className="p-2 border border-gray-300 text-center w-16">Qty</th>
+                                  <th className="p-2 border border-gray-300 text-right w-24">Unit Cost (₱)</th>
+                                  <th className="p-2 border border-gray-300 text-right w-28">Total Cost (₱)</th>
+                                  <th className="p-2 border border-gray-300 w-28">Custodian</th>
+                                  <th className="p-2 border border-gray-300 text-center w-20">Condition</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {locItems.map((item, idx) => (
+                                  <tr key={item.id} className="border-b border-gray-200 hover:bg-blue-50/30">
+                                    <td className="p-2 border border-gray-200 text-center">{idx + 1}</td>
+                                    <td className="p-2 border border-gray-200 font-mono font-bold text-blue-950 whitespace-nowrap">{item.propertyNumber}</td>
+                                    <td className="p-2 border border-gray-200 whitespace-nowrap">
+                                      {item.pisCode ? (
+                                        <span className="font-mono text-[10px] font-black bg-[#FFF000] text-black border border-black px-1.5 py-0.5 rounded-xs">
+                                          {item.pisCode}
+                                        </span>
+                                      ) : (
+                                        <span className="text-gray-400 font-mono text-[10px]">—</span>
+                                      )}
+                                    </td>
+                                    <td className="p-2 border border-gray-200">
+                                      <div className="font-semibold text-gray-900">{item.name}</div>
+                                      {item.description && <div className="text-[11px] text-gray-500 line-clamp-1">{item.description}</div>}
+                                    </td>
+                                    <td className="p-2 border border-gray-200 text-gray-600">{item.category}</td>
+                                    <td className="p-2 border border-gray-200 text-center font-bold">{item.quantity} {item.unit}</td>
+                                    <td className="p-2 border border-gray-200 text-right">₱ {item.unitValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                                    <td className="p-2 border border-gray-200 text-right font-bold text-emerald-800">
+                                      ₱ {(item.totalValue || item.quantity * item.unitValue).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                                    </td>
+                                    <td className="p-2 border border-gray-200 font-medium">{item.custodian}</td>
+                                    <td className="p-2 border border-gray-200 text-center font-semibold">{item.condition}</td>
+                                  </tr>
+                                ))}
+                                <tr className="bg-emerald-50/70 font-bold border-t border-gray-300 text-emerald-950">
+                                  <td colSpan={5} className="p-2 border border-gray-300 text-right uppercase text-[11px]">Subtotal for {locName}:</td>
+                                  <td className="p-2 border border-gray-300 text-center">{locQty} units</td>
+                                  <td className="p-2 border border-gray-300"></td>
+                                  <td className="p-2 border border-gray-300 text-right font-black text-emerald-900">
+                                    ₱ {locTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                                  </td>
+                                  <td colSpan={2} className="p-2 border border-gray-300"></td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  /* Flat Table or Specific Location Table */
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-gray-100 text-gray-700 border-y border-gray-300 font-bold">
+                          <th className="p-2 border border-gray-300 text-center w-8">#</th>
+                          <th className="p-2 border border-gray-300 w-28">Property No.</th>
+                          <th className="p-2 border border-gray-300 w-24">PIS Code</th>
+                          <th className="p-2 border border-gray-300">Article / Description</th>
+                          <th className="p-2 border border-gray-300 w-32">Category</th>
+                          <th className="p-2 border border-gray-300 text-center w-16">Qty</th>
+                          <th className="p-2 border border-gray-300 text-right w-24">Unit Cost (₱)</th>
+                          <th className="p-2 border border-gray-300 text-right w-28">Total Cost (₱)</th>
+                          <th className="p-2 border border-gray-300 w-32">Location / Cabinet</th>
+                          <th className="p-2 border border-gray-300 w-28">Custodian</th>
+                          <th className="p-2 border border-gray-300 text-center w-20">Condition</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {modalItemsToPreview.length > 0 ? (
+                          modalItemsToPreview.map((item, idx) => (
+                            <tr key={item.id} className="border-b border-gray-200 hover:bg-blue-50/30">
+                              <td className="p-2 border border-gray-200 text-center">{idx + 1}</td>
+                              <td className="p-2 border border-gray-200 font-mono font-bold text-blue-950 whitespace-nowrap">{item.propertyNumber}</td>
+                              <td className="p-2 border border-gray-200 whitespace-nowrap">
+                                {item.pisCode ? (
+                                  <span className="font-mono text-[10px] font-black bg-[#FFF000] text-black border border-black px-1.5 py-0.5 rounded-xs">
+                                    {item.pisCode}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400 font-mono text-[10px]">—</span>
+                                )}
+                              </td>
+                              <td className="p-2 border border-gray-200">
+                                <div className="font-semibold text-gray-900">{item.name}</div>
+                                {item.description && <div className="text-[11px] text-gray-500 line-clamp-1">{item.description}</div>}
+                              </td>
+                              <td className="p-2 border border-gray-200 text-gray-600">{item.category}</td>
+                              <td className="p-2 border border-gray-200 text-center font-bold">{item.quantity} {item.unit}</td>
+                              <td className="p-2 border border-gray-200 text-right">₱ {item.unitValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-2 border border-gray-200 text-right font-bold text-emerald-800">
+                                ₱ {(item.totalValue || item.quantity * item.unitValue).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="p-2 border border-gray-200 font-medium">{item.location}</td>
+                              <td className="p-2 border border-gray-200 font-medium">{item.custodian}</td>
+                              <td className="p-2 border border-gray-200 text-center font-semibold">{item.condition}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={11} className="p-8 text-center text-gray-400">
+                              No property records found matching {modalIsSpecificLocation ? `location "${reportLocation}"` : 'the current filters'}.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Grand Total Row */}
+                <div className="bg-gray-100 border border-gray-300 rounded-md p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <div className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                    Report Grand Total ({modalItemsToPreview.length} Articles • {modalTotalQuantity} Physical Units)
+                  </div>
+                  <div className="text-xl font-black text-emerald-900">
+                    ₱ {modalTotalValuation.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+
+                {/* System Generated Document Footer Preview */}
+                <div className="pt-6 border-t border-gray-200">
+                  <div className="bg-gray-50 border border-gray-200 rounded-md p-4 text-center space-y-1">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-900 border border-blue-200 mb-1">
+                      <span>SYSTEM GENERATED DOCUMENT</span>
+                      <span>•</span>
+                      <span>DO NOT ALTER ENTRIES MANUALLY</span>
+                    </div>
+                    <p className="text-xs font-bold text-gray-900">
+                      Integrated Laboratory Equipment Management System (I-LEMS)
+                    </p>
+                    <p className="text-[11px] text-gray-500">
+                      &copy; 2025-{new Date().getFullYear()}. Leon NHS - Science Laboratory
+                    </p>
+                    <p className="text-[11px] text-gray-500">
+                      Developed by Fitz Jyro Calisnao, through the vision of Jong Bok Chun, KOICA Volunteer
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer Toolbar */}
+            <div className="px-5 py-3 bg-gray-50 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-3 flex-shrink-0 text-xs">
+              <div className="text-gray-500 font-medium text-[11px] sm:text-xs">
+                Print dialog opened automatically. You can review the document above or click Print Document to reprint.
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPrintReportModalOpen(false)}
+                  className="px-3.5 py-1.5 bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 rounded-sm font-semibold transition-colors shadow-2xs"
+                >
+                  Close Preview
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePrintOfficialReport}
+                  className="px-4 py-1.5 bg-blue-900 hover:bg-blue-950 text-white rounded-sm font-bold transition-colors flex items-center gap-1.5 shadow-xs"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Document</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
