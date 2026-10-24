@@ -15,18 +15,50 @@ interface PropertyStickerModalProps {
 
 export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item, onClose, onOpenBatchSheet, onOpenCableTag }) => {
   const barcodeRef = useRef<SVGSVGElement>(null);
-  const [copies, setCopies] = useState<number>(item.quantity > 1 ? Math.min(item.quantity, 12) : 1);
+  
+  // Extract all assigned PIS codes for this asset record
+  const allPisCodes: string[] = (item.pisCodes && item.pisCodes.length > 0)
+    ? item.pisCodes
+    : [item.pisCode || `PIS-26-${item.propertyNumber.replace(/[^0-9]/g, '').slice(-5).padStart(5, '0')}`];
+
+  const hasMultipleUnits = allPisCodes.length > 1;
+  const [selectedUnitIdx, setSelectedUnitIdx] = useState<number>(0);
+  const activePisCode = allPisCodes[selectedUnitIdx] || allPisCodes[0];
+
+  const [copies, setCopies] = useState<number>(hasMultipleUnits ? allPisCodes.length : (item.quantity > 1 ? Math.min(item.quantity, 12) : 1));
   const [copied, setCopied] = useState(false);
   const [department, setDepartment] = useState('SCIENCE DEPARTMENT');
 
-  const pisCode = item.pisCode || `PIS-26-${item.propertyNumber.replace(/[^0-9]/g, '').slice(-5).padStart(5, '0')}`;
   const deployedOrigin = DEPLOYED_URL;
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`${deployedOrigin}/?view_pis=${pisCode}`)}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`${deployedOrigin}/?view_pis=${activePisCode}`)}`;
+
+  // Helper to generate standalone barcode SVG string
+  const generateBarcodeSvg = (code: string): string => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    try {
+      JsBarcode(svg, code, {
+        format: 'CODE128',
+        width: 1.85,
+        height: 48,
+        displayValue: true,
+        fontSize: 12,
+        font: 'monospace',
+        textMargin: 2,
+        margin: 0,
+        background: 'transparent',
+        lineColor: '#000000'
+      });
+      return svg.outerHTML;
+    } catch (err) {
+      console.error('Failed to generate barcode SVG for', code, err);
+      return '';
+    }
+  };
 
   useEffect(() => {
     if (barcodeRef.current) {
       try {
-        JsBarcode(barcodeRef.current, pisCode, {
+        JsBarcode(barcodeRef.current, activePisCode, {
           format: 'CODE128',
           width: 1.85,
           height: 48,
@@ -42,7 +74,7 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
         console.error('Failed to generate sticker barcode', err);
       }
     }
-  }, [pisCode]);
+  }, [activePisCode]);
 
   // Official Leon NHS Seal image: img/Leon NHS - Seal(Black  Outline).png
   const renderSchoolSealSvg = (size = 46) => (
@@ -58,12 +90,17 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
     const printWindow = window.open('', '', 'width=800,height=850');
     if (!printWindow) return;
 
-    const barcodeSvgHtml = barcodeRef.current?.outerHTML || '';
     const sealImgHtml = `
       <img src="${LEON_NHS_SEAL_DATA_URI}" alt="Leon NHS Seal" class="school-seal" />
     `;
 
-    const stickersHtml = Array.from({ length: copies }).map((_, idx) => `
+    const stickersHtml = Array.from({ length: copies }).map((_, idx) => {
+      // For multi-unit items, assign each unit's distinct PIS sticker code and QR
+      const stickerPisCode = allPisCodes[idx] || allPisCodes[idx % allPisCodes.length] || activePisCode;
+      const stickerQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`${deployedOrigin}/?view_pis=${stickerPisCode}`)}`;
+      const stickerBarcodeSvg = generateBarcodeSvg(stickerPisCode);
+
+      return `
       <div class="pis-sticker">
         <!-- Security Watermark under each sticker -->
         <div class="watermark-layer">
@@ -93,21 +130,22 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
           <!-- Bottom Section: QR + Big Barcode (Full Width) -->
           <div class="sticker-bot">
             <div class="qr-col">
-              <img src="${qrUrl}" alt="QR" class="qr-img" />
+              <img src="${stickerQrUrl}" alt="QR" class="qr-img" />
             </div>
             <div class="barcode-col">
-              ${barcodeSvgHtml}
+              ${stickerBarcodeSvg}
             </div>
           </div>
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
 
     printWindow.document.write(`<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>PIS Sticker - ${pisCode}</title>
+  <title>PIS Sticker${hasMultipleUnits ? `s (${copies} Units)` : ` - ${activePisCode}`}</title>
   <style>
     @page {
       size: auto;
@@ -308,7 +346,7 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
   };
 
   const copyPISCode = () => {
-    navigator.clipboard.writeText(pisCode);
+    navigator.clipboard.writeText(activePisCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -337,6 +375,41 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
 
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto space-y-5 flex-1">
+          {/* Multi-unit sticker switcher when item has multiple PIS codes */}
+          {hasMultipleUnits && (
+            <div className="bg-blue-50 border border-blue-200 rounded-md p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-blue-900 flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-blue-600" />
+                  Multi-Unit Property ({allPisCodes.length} Units Assigned)
+                </span>
+                <span className="text-[10px] font-bold text-blue-700 bg-white px-2 py-0.5 rounded-sm border border-blue-200">
+                  Previewing Unit {selectedUnitIdx + 1} of {allPisCodes.length}
+                </span>
+              </div>
+              <p className="text-[11px] text-blue-800 leading-tight">
+                All units share identical asset information, specifications, and valuation, but each unit bears a unique PIS sticker.
+              </p>
+              <div className="flex gap-1.5 overflow-x-auto pb-1 pt-0.5">
+                {allPisCodes.map((code, idx) => (
+                  <button
+                    key={code}
+                    type="button"
+                    onClick={() => setSelectedUnitIdx(idx)}
+                    className={`px-2.5 py-1 text-xs font-mono font-bold rounded-sm border transition-colors whitespace-nowrap flex items-center gap-1 ${
+                      selectedUnitIdx === idx
+                        ? 'bg-blue-600 text-white border-blue-700 shadow-xs'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
+                    }`}
+                  >
+                    <span>#{idx + 1}:</span>
+                    <span>{code}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Authentic PIS Yellow Sticker Preview with Security Watermark */}
           <div className="border-2 border-black rounded-md bg-[#FFF000] text-black shadow-lg overflow-hidden relative flex flex-col justify-between" style={{ minHeight: '205px' }}>
             {/* Background Security Watermark */}
@@ -396,9 +469,9 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
           {/* Sticker Details & Linker info */}
           <div className="bg-amber-50 border border-amber-200 rounded-md p-3.5 space-y-2 text-xs">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-amber-900">Unique PIS Code (Tag ID):</span>
+              <span className="font-bold text-amber-900">Current Unit PIS Code (Tag ID):</span>
               <div className="flex items-center gap-1.5 font-mono font-black text-blue-950 bg-white px-2 py-0.5 rounded-sm border border-amber-300">
-                <span>{pisCode}</span>
+                <span>{activePisCode}</span>
                 <button onClick={copyPISCode} className="text-gray-400 hover:text-black">
                   {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
@@ -414,7 +487,7 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
             </div>
             <div className="flex items-center justify-between text-gray-600 pt-1 border-t border-amber-200/60">
               <span>Public Scan URL:</span>
-              <span className="font-mono text-[11px] font-bold text-blue-900">{deployedOrigin}/?view_pis={pisCode}</span>
+              <span className="font-mono text-[11px] font-bold text-blue-900">{deployedOrigin}/?view_pis={activePisCode}</span>
             </div>
           </div>
 
@@ -433,13 +506,17 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
           <div className="bg-gray-50 p-3.5 rounded-md border border-gray-200 flex items-center justify-between">
             <div>
               <label className="text-xs font-bold text-gray-700 block">Number of Copies</label>
-              <p className="text-[11px] text-gray-500">For units in this batch ({item.quantity} {item.unit})</p>
+              <p className="text-[11px] text-gray-500">
+                {hasMultipleUnits 
+                  ? `Prints distinct PIS stickers for each unit (${allPisCodes.length} sequential tags)`
+                  : `For units in this batch (${item.quantity} ${item.unit})`}
+              </p>
             </div>
             <div className="flex items-center space-x-2">
               <input
                 type="number"
                 min="1"
-                max={Math.max(item.quantity, 50)}
+                max={Math.max(item.quantity, allPisCodes.length, 50)}
                 value={copies}
                 onChange={(e) => setCopies(Math.max(1, parseInt(e.target.value) || 1))}
                 className="w-16 px-2.5 py-1 text-sm border border-gray-300 rounded-md font-semibold text-center focus:ring-2 focus:ring-amber-500 focus:outline-none"

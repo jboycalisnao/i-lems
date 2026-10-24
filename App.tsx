@@ -21,8 +21,12 @@ import RequestsList from './components/RequestsList';
 import PropertyManagement from './components/PropertyManagement';
 import ConfirmModal from './components/ConfirmModal';
 import AppFooter from './components/AppFooter';
+import { USBScannerPairModal } from './components/USBScannerPairModal';
+import { ScannedRecordModal } from './components/ScannedRecordModal';
+import usbScannerService from './services/usbScannerService';
+import { lookupScannedBarcode, ScannedLookupResult } from './services/scannerLookupService';
 import { getUserStatusUpdateTemplate } from './services/emailTemplates';
-import { LayoutDashboard, List, Plus, FlaskConical, HandPlatter, Settings as SettingsIcon, LogOut, ScanLine, Inbox, RefreshCw, AlertCircle, Building2 } from 'lucide-react';
+import { LayoutDashboard, List, Plus, FlaskConical, HandPlatter, Settings as SettingsIcon, LogOut, ScanLine, Inbox, RefreshCw, AlertCircle, Building2, Usb } from 'lucide-react';
 import { HEAD_TITLE, SYSTEM_FULL_NAME, SYSTEM_NAME, SYSTEM_SHORT_NAME } from './branding';
 
 type AppView = 'dashboard' | 'inventory' | 'property' | 'lending' | 'scanner' | 'settings' | 'requests';
@@ -82,6 +86,11 @@ const App: React.FC = () => {
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean; title: string; message: string; onConfirm: () => void; isDestructive: boolean;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => {}, isDestructive: false });
+
+  // USB Barcode Scanner & Hardware Dongle states
+  const [isUsbModalOpen, setIsUsbModalOpen] = useState(false);
+  const [scannedRecord, setScannedRecord] = useState<ScannedLookupResult | null>(null);
+  const [usbScannerStatus, setUsbScannerStatus] = useState(() => usbScannerService.getStatus());
 
   const refreshData = useCallback(async (silent = false, forceRefresh = false) => {
       const hasCachedItems = storage.getCachedItems().length > 0;
@@ -157,6 +166,30 @@ const App: React.FC = () => {
         cleanupRefresh();
     };
   }, [refreshData, isDbConnected]);
+
+  // Global USB Barcode Scanner & 2.4G Dongle listener
+  useEffect(() => {
+    const unsubStatus = usbScannerService.onStatus((status) => {
+      setUsbScannerStatus(status);
+    });
+
+    const unsubScan = usbScannerService.onScan(async (barcode) => {
+      // If auto-modal is enabled in USB scanner preferences, automatically pull up record
+      if (usbScannerService.isAutoModalEnabled()) {
+        try {
+          const result = await lookupScannedBarcode(barcode, items, borrowRecords);
+          setScannedRecord(result);
+        } catch (err) {
+          console.error('Error during barcode lookup:', err);
+        }
+      }
+    });
+
+    return () => {
+      unsubStatus();
+      unsubScan();
+    };
+  }, [items, borrowRecords]);
 
   // Reflect the official title and an uploaded logo in the browser tab.
   useEffect(() => {
@@ -437,6 +470,18 @@ const App: React.FC = () => {
         <header className="bg-white/95 backdrop-blur-md border-b border-gray-200 px-3 py-2.5 md:hidden flex justify-between items-center gap-2 z-30 shadow-sm flex-shrink-0">
              <AppBrand compact />
              <div className="flex items-center gap-2 flex-shrink-0">
+                 <button
+                     type="button"
+                     aria-label="USB Barcode Scanner Dongle"
+                     title={usbScannerStatus.mode === 'webhid' ? `USB Dongle Paired: ${usbScannerStatus.deviceName}` : 'USB Barcode Scanner Ready'}
+                     onClick={() => setIsUsbModalOpen(true)}
+                     className="p-2 rounded-md text-gray-600 hover:bg-gray-100 relative"
+                 >
+                     <Usb className={`w-5 h-5 ${usbScannerStatus.mode === 'webhid' ? 'text-blue-600' : 'text-emerald-600'}`} />
+                     <span className="absolute top-1.5 right-1.5 flex h-2 w-2">
+                         <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                     </span>
+                 </button>
                  <button aria-label="Refresh records" title="Refresh records" onClick={() => refreshData(true).catch(() => {})} className={`p-2 rounded-md text-gray-500 hover:bg-gray-100 ${isLoading ? 'animate-spin' : ''}`}><RefreshCw className="w-5 h-5"/></button>
                  <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg p-1 pr-1.5">
                      <div className="w-7 h-7 rounded-full bg-[#18008F] text-white font-bold flex items-center justify-center text-[10px] flex-shrink-0">
@@ -475,6 +520,25 @@ const App: React.FC = () => {
                                 <span className="sm:hidden">Add</span>
                             </button>
                         )}
+
+                        {/* USB Barcode Scanner Dongle Status & Pair Trigger */}
+                        <button
+                            type="button"
+                            onClick={() => setIsUsbModalOpen(true)}
+                            className="flex items-center gap-2 px-3 py-2 text-xs font-bold rounded-lg border transition-all bg-white hover:bg-gray-50 border-gray-200 text-gray-700 shadow-xs"
+                            title={usbScannerStatus.mode === 'webhid' ? `USB Dongle Paired: ${usbScannerStatus.deviceName}` : 'USB 2.4G Barcode Dongle Active (Click to Pair / Test)'}
+                        >
+                            <div className="relative flex items-center">
+                                <Usb className={`w-4 h-4 ${usbScannerStatus.mode === 'webhid' ? 'text-blue-600' : 'text-emerald-600'}`} />
+                                <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                </span>
+                            </div>
+                            <span className="hidden md:inline font-semibold">
+                                {usbScannerStatus.mode === 'webhid' ? 'USB Paired' : 'USB Dongle'}
+                            </span>
+                        </button>
 
                         {/* Top Right User Profile Card matching screenshot + Logout Button */}
                         <div className="flex items-center bg-white border border-gray-200 rounded-lg p-1.5 pr-2.5 shadow-xs gap-3">
@@ -554,6 +618,30 @@ const App: React.FC = () => {
       {isBorrowModalOpen && <BorrowModal availableItems={items} initialItem={preSelectedBorrowItem} specificId={borrowSpecificId} onConfirm={handleBorrowConfirm} onCancel={() => setIsBorrowModalOpen(false)} />}
       {returnModalState.isOpen && returnModalState.record && <ReturnModal record={returnModalState.record} item={returnModalState.item} onConfirm={handleReturnConfirm} onCancel={() => setReturnModalState({ isOpen: false })} />}
       <ConfirmModal isOpen={confirmModal.isOpen} title={confirmModal.title} message={confirmModal.message} onConfirm={confirmModal.onConfirm} onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))} isDestructive={confirmModal.isDestructive} />
+      
+      {/* USB Barcode Scanner Dongle Pairing & Test Terminal Modal */}
+      <USBScannerPairModal
+        isOpen={isUsbModalOpen}
+        onClose={() => setIsUsbModalOpen(false)}
+      />
+
+      {/* Instant Record Pull-up Modal on Scanned Barcode */}
+      <ScannedRecordModal
+        result={scannedRecord}
+        onClose={() => setScannedRecord(null)}
+        onBorrow={(item, specificId) => {
+          setScannedRecord(null);
+          openBorrowModal(item, specificId);
+        }}
+        onReturn={(recordId) => {
+          setScannedRecord(null);
+          initiateReturn(recordId);
+        }}
+        onNavigate={(path) => {
+          setScannedRecord(null);
+          navigate(path);
+        }}
+      />
     </div>
   );
 };

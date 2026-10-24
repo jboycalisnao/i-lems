@@ -179,6 +179,7 @@ export interface PropertyItem {
   lastInspected?: string;
   shortId?: string; // For barcode tag
   pisCode?: string; // Property Inventory Sticker Code (e.g. PIS-26-04928)
+  pisCodes?: string[]; // Multiple PIS Sticker codes for multi-quantity items (e.g. ["PIS-26-0001", "PIS-26-0002"])
 }
 
 export interface PropertyStats {

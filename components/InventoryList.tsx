@@ -5,7 +5,8 @@ import { InventoryItem, ItemCondition, Category } from '../types';
 import { 
   Edit2, Trash2, QrCode, Search, Filter, Barcode, FileText, List, 
   Printer, AlertTriangle, XCircle, Clipboard, ChevronDown, ChevronRight, 
-  Package, LayoutGrid, Droplets, Minus, Paperclip, MapPin, Microscope 
+  Package, LayoutGrid, Droplets, Minus, Paperclip, MapPin, Microscope,
+  X, Layers, Eye
 } from 'lucide-react';
 import { getCategoryColor, getCategoryIcon } from '../constants';
 import { SYSTEM_NAME } from '../branding';
@@ -50,6 +51,28 @@ const InventoryList: React.FC<InventoryListProps> = ({
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [managingFilesItem, setManagingFilesItem] = useState<InventoryItem | null>(null);
 
+  // Print plain equipment & quantity list per cabinet state
+  const [isPrintLocationModalOpen, setIsPrintLocationModalOpen] = useState(false);
+  const [selectedPrintLocation, setSelectedPrintLocation] = useState<string>('All');
+  const [printPageBreakPerCabinet, setPrintPageBreakPerCabinet] = useState(true);
+
+  // Close print location modal on Escape key
+  useEffect(() => {
+    if (!isPrintLocationModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsPrintLocationModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPrintLocationModalOpen]);
+
+  const handleOpenPrintLocationModal = (initialLoc?: string) => {
+    setSelectedPrintLocation(initialLoc && initialLoc !== 'All' ? initialLoc : 'All');
+    setIsPrintLocationModalOpen(true);
+  };
+
   // Handle Initial Search Term (e.g. from Deep Link)
   useEffect(() => {
       if (initialSearchTerm) {
@@ -71,6 +94,34 @@ const InventoryList: React.FC<InventoryListProps> = ({
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   }, [items]);
+
+  // Map items by distinct cabinet / location
+  const itemsByLocation = useMemo(() => {
+    const map = new Map<string, InventoryItem[]>();
+    
+    distinctLocations.forEach(loc => map.set(loc, []));
+    if (items.some(i => !i.location?.trim())) {
+      map.set('Unassigned / General Storage', []);
+    }
+
+    items.forEach(item => {
+      const loc = item.location?.trim() || 'Unassigned / General Storage';
+      if (!map.has(loc)) {
+        map.set(loc, []);
+      }
+      map.get(loc)!.push(item);
+    });
+
+    map.forEach((locItems) => {
+      locItems.sort((a, b) => a.name.localeCompare(b.name));
+    });
+
+    return map;
+  }, [items, distinctLocations]);
+
+  const allLocationKeys = useMemo(() => {
+    return Array.from(itemsByLocation.keys());
+  }, [itemsByLocation]);
 
   // --- Filtering Logic ---
   const filteredItems = useMemo(() => {
@@ -259,6 +310,359 @@ const InventoryList: React.FC<InventoryListProps> = ({
     }
   };
 
+  const handlePrintCabinetList = (targetLocation: string = selectedPrintLocation, pageBreak: boolean = printPageBreakPerCabinet) => {
+    const printWindow = window.open('', '', 'height=850,width=800');
+    if (!printWindow) return;
+
+    const locationsToPrint: string[] = targetLocation === 'All' 
+      ? allLocationKeys 
+      : [targetLocation];
+
+    const isSingle = locationsToPrint.length === 1;
+    const singleLocName = isSingle ? locationsToPrint[0] : '';
+    const totalEquipmentArticles = locationsToPrint.reduce((acc, loc) => acc + (itemsByLocation.get(loc)?.length || 0), 0);
+    const totalEquipmentUnits = locationsToPrint.reduce((acc, loc) => {
+      const locItems = itemsByLocation.get(loc) || [];
+      return acc + locItems.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+    }, 0);
+
+    const docTitle = isSingle 
+      ? `Cabinet Inventory - ${singleLocName} - Leon NHS Science Lab`
+      : `Cabinet Inventory List - All Locations - Leon NHS Science Lab`;
+
+    const escape = (str?: string) => {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    };
+
+    const headerHtml = (locName?: string) => `
+      <div class="deped-header">
+        <div class="deped-sub">Republic of the Philippines</div>
+        <div class="deped-dept">DEPARTMENT OF EDUCATION</div>
+        <div class="deped-div">Region VI - Western Visayas • Division of Iloilo • District of Leon</div>
+        <div class="school-name">LEON NATIONAL HIGH SCHOOL</div>
+        <div class="lab-sub">SCIENCE LABORATORY • INVENTORY MANAGEMENT SYSTEM</div>
+        <div class="doc-title">PHYSICAL INVENTORY LIST PER CABINET / STORAGE LOCATION</div>
+        ${locName ? `<div class="cabinet-scope-pill">STORAGE LOCATION: ${escape(locName)}</div>` : ''}
+      </div>
+    `;
+
+    let contentHtml = '';
+
+    if (!pageBreak || isSingle) {
+      contentHtml += headerHtml(isSingle ? singleLocName : 'ALL CABINETS & STORAGE LOCATIONS');
+      contentHtml += `
+        <div class="print-meta-bar">
+          <div><strong>Scope:</strong> ${isSingle ? escape(singleLocName) : `All Cabinets (${locationsToPrint.length} Locations)`}</div>
+          <div><strong>Total Articles:</strong> ${totalEquipmentArticles} | <strong>Total Physical Units:</strong> ${totalEquipmentUnits}</div>
+          <div><strong>Date Checked:</strong> ${new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+        </div>
+      `;
+    }
+
+    locationsToPrint.forEach((locKey, index) => {
+      const locItems = itemsByLocation.get(locKey) || [];
+      const cabinetQty = locItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+      const isLast = index === locationsToPrint.length - 1;
+
+      let sectionHtml = '';
+      if (pageBreak && !isSingle) {
+        sectionHtml += headerHtml(locKey);
+        sectionHtml += `
+          <div class="print-meta-bar">
+            <div><strong>Location:</strong> ${escape(locKey)}</div>
+            <div><strong>Articles:</strong> ${locItems.length} | <strong>Units:</strong> ${cabinetQty}</div>
+            <div><strong>Date:</strong> ${new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+          </div>
+        `;
+      }
+
+      sectionHtml += `
+        <div class="cabinet-block ${pageBreak && !isLast ? 'page-break-after' : ''}">
+          <div class="cabinet-banner">
+            <span class="cabinet-title">LOCATION: ${escape(locKey).toUpperCase()}</span>
+            <span class="cabinet-meta">${locItems.length} Equipment Articles • ${cabinetQty} Total Units</span>
+          </div>
+
+          <table class="inventory-table">
+            <thead>
+              <tr>
+                <th style="width: 6%; text-align: center;">#</th>
+                <th style="width: 50%;">Equipment / Apparatus Description</th>
+                <th style="width: 22%;">Category</th>
+                <th style="width: 10%; text-align: center;">Qty</th>
+                <th style="width: 12%; text-align: center;">Condition</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${locItems.length === 0 ? `
+                <tr>
+                  <td colspan="5" style="text-align: center; padding: 16px; color: #64748b; font-style: italic;">
+                    No equipment currently listed in this cabinet / storage location.
+                  </td>
+                </tr>
+              ` : locItems.map((item, itemIdx) => `
+                <tr>
+                  <td style="text-align: center; color: #475569; font-weight: bold;">${itemIdx + 1}</td>
+                  <td>
+                    <div class="item-name">${escape(item.name)}</div>
+                    ${item.description ? `<div class="item-desc">${escape(stripMetadata(item.description))}</div>` : ''}
+                  </td>
+                  <td class="item-cat">${escape(item.category || 'General')}</td>
+                  <td style="text-align: center;" class="item-qty">${item.quantity}</td>
+                  <td style="text-align: center;" class="item-cond">${escape(item.condition || 'Good')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+            <tfoot>
+              <tr class="cabinet-total-row">
+                <td colspan="3" style="text-align: right; font-weight: bold; text-transform: uppercase;">
+                  Cabinet Subtotal (${escape(locKey)}):
+                </td>
+                <td style="text-align: center; font-weight: 800; font-size: 11pt; color: #1e3a8a;">
+                  ${cabinetQty}
+                </td>
+                <td style="text-align: center; font-size: 8pt; color: #475569;">
+                  ${locItems.length} items
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div class="signoff-grid">
+            <div class="signoff-cell">
+              <div class="signoff-role">Physical Count & Inventory Conducted by:</div>
+              <div class="signoff-line">_____________________________________________</div>
+              <div class="signoff-label">Science Teacher / Laboratory Custodian</div>
+              <div class="signoff-date">Date Signed: _________________________________</div>
+            </div>
+            <div class="signoff-cell">
+              <div class="signoff-role">Verified & Inspected by:</div>
+              <div class="signoff-line">_____________________________________________</div>
+              <div class="signoff-label">Science Department Coordinator / School Head</div>
+              <div class="signoff-date">Date Signed: _________________________________</div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      contentHtml += sectionHtml;
+    });
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>${escape(docTitle)}</title>
+        <style>
+          @page {
+            size: portrait;
+            margin: 14mm 12mm 14mm 12mm;
+            @top-left {
+              content: "LEON NATIONAL HIGH SCHOOL • SCIENCE LABORATORY";
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 7.5pt;
+              font-weight: 700;
+              color: #1e3a8a;
+            }
+            @top-right {
+              content: "Page " counter(page) " of " counter(pages);
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 7.5pt;
+              font-weight: 700;
+              color: #1e3a8a;
+            }
+            @bottom-left {
+              content: "I-LEMS • Cabinet Door Inventory Sheet (Plain Equipment & Quantity)";
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 7pt;
+              color: #64748b;
+            }
+            @bottom-right {
+              content: "Printed: ${new Date().toLocaleDateString('en-PH')}";
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 7pt;
+              color: #64748b;
+            }
+          }
+          html, body {
+            margin: 0;
+            padding: 0;
+            background: #ffffff;
+            font-family: Arial, Helvetica, sans-serif;
+            color: #111827;
+            font-size: 9.5pt;
+            line-height: 1.3;
+          }
+          .deped-header {
+            text-align: center;
+            border-bottom: 2px solid #1e3a8a;
+            padding-bottom: 6px;
+            margin-bottom: 8px;
+          }
+          .deped-sub { font-size: 8pt; color: #4b5563; }
+          .deped-dept { font-size: 9.5pt; font-weight: bold; color: #1e3a8a; margin: 1px 0; }
+          .deped-div { font-size: 7.5pt; color: #4b5563; }
+          .school-name { font-size: 12pt; font-weight: 900; color: #991b1b; margin: 2px 0; letter-spacing: 0.5px; }
+          .lab-sub { font-size: 8pt; font-weight: 700; color: #1e3a8a; letter-spacing: 0.3px; }
+          .doc-title { font-size: 10.5pt; font-weight: 800; text-transform: uppercase; color: #111827; margin: 4px 0 2px 0; }
+          .cabinet-scope-pill {
+            display: inline-block;
+            background: #eff6ff;
+            color: #1e40af;
+            border: 1px solid #bfdbfe;
+            padding: 2px 10px;
+            border-radius: 4px;
+            font-size: 9.5pt;
+            font-weight: 800;
+            margin-top: 3px;
+            text-transform: uppercase;
+          }
+          .print-meta-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 8.5pt;
+            background: #f8fafc;
+            padding: 5px 8px;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            margin-bottom: 10px;
+          }
+          .cabinet-block {
+            margin-bottom: 18px;
+            page-break-inside: avoid;
+            break-inside: avoid;
+          }
+          .page-break-after {
+            page-break-after: always;
+            break-after: page;
+          }
+          .cabinet-banner {
+            background: #1e3a8a;
+            color: #ffffff;
+            padding: 5px 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-radius: 4px 4px 0 0;
+            font-size: 9pt;
+            font-weight: bold;
+          }
+          .cabinet-title {
+            letter-spacing: 0.5px;
+          }
+          .cabinet-meta {
+            font-size: 8pt;
+            font-weight: normal;
+            opacity: 0.95;
+          }
+          .inventory-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 9pt;
+            margin-bottom: 10px;
+          }
+          .inventory-table th, .inventory-table td {
+            border: 1px solid #94a3b8;
+            padding: 5px 6px;
+            vertical-align: middle;
+          }
+          .inventory-table th {
+            background-color: #f1f5f9;
+            font-weight: 800;
+            text-transform: uppercase;
+            font-size: 8pt;
+            color: #334155;
+            letter-spacing: 0.3px;
+          }
+          .inventory-table tr:nth-child(even) td {
+            background-color: #f8fafc;
+          }
+          .item-name {
+            font-weight: 700;
+            color: #0f172a;
+          }
+          .item-desc {
+            font-size: 7.5pt;
+            color: #475569;
+            margin-top: 1px;
+          }
+          .item-cat {
+            font-size: 8.5pt;
+            color: #334155;
+          }
+          .item-qty {
+            font-size: 10.5pt;
+            font-weight: 800;
+            color: #0f172a;
+          }
+          .item-cond {
+            font-size: 8pt;
+            color: #334155;
+          }
+          .cabinet-total-row {
+            background-color: #f1f5f9 !important;
+          }
+          .signoff-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 14px;
+            padding-top: 8px;
+            page-break-inside: avoid;
+            break-inside: avoid;
+          }
+          .signoff-cell {
+            font-size: 8pt;
+          }
+          .signoff-role {
+            font-weight: 700;
+            color: #334155;
+            margin-bottom: 24px;
+          }
+          .signoff-line {
+            color: #64748b;
+            font-weight: bold;
+          }
+          .signoff-label {
+            font-size: 7.5pt;
+            color: #475569;
+            margin-top: 2px;
+          }
+          .signoff-date {
+            font-size: 7.5pt;
+            color: #64748b;
+            margin-top: 3px;
+          }
+          @media print {
+            body {
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        ${contentHtml}
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+            }, 300);
+          };
+        </script>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
   const getConditionBadge = (condition: ItemCondition) => {
     switch (condition) {
       case ItemCondition.Good: return <span className="bg-green-100 text-green-700 px-2 py-1 rounded-full text-xs font-medium border border-green-200">Good</span>;
@@ -368,6 +772,16 @@ const InventoryList: React.FC<InventoryListProps> = ({
                           );
                         })}
                     </select>
+
+                    <button 
+                        onClick={() => handleOpenPrintLocationModal(filterLocation)}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 text-blue-800 rounded-md hover:bg-blue-100 transition-colors border border-blue-200 shadow-sm text-sm font-semibold whitespace-nowrap"
+                        title="Print plain equipment & quantity list per location/cabinet on portrait paper"
+                    >
+                        <Printer className="w-4 h-4 text-blue-700" />
+                        <span className="hidden md:inline">Print Cabinet List</span>
+                        <span className="md:hidden">Print</span>
+                    </button>
                 </div>
             </div>
 
@@ -561,13 +975,23 @@ const InventoryList: React.FC<InventoryListProps> = ({
                       <h3 className="text-2xl font-bold text-gray-800">Inventory Summary</h3>
                       <p className="text-gray-500">Real-time analysis of equipment status and categories.</p>
                   </div>
-                  <button 
-                    onClick={handlePrintReport}
-                    className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors shadow-md"
-                  >
-                      <Printer className="w-4 h-4" />
-                      <span>Print Report</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => handleOpenPrintLocationModal('All')}
+                      className="flex items-center space-x-2 bg-white text-blue-700 border border-blue-300 px-4 py-2 rounded-md hover:bg-blue-50 transition-colors shadow-sm font-semibold text-sm"
+                      title="Print plain list of equipment and quantity per location/cabinet on portrait paper"
+                    >
+                        <Layers className="w-4 h-4 text-blue-700" />
+                        <span>Print Cabinet Lists (Portrait)</span>
+                    </button>
+                    <button 
+                      onClick={handlePrintReport}
+                      className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors shadow-md text-sm font-medium"
+                    >
+                        <Printer className="w-4 h-4" />
+                        <span>Print Report</span>
+                    </button>
+                  </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -662,6 +1086,268 @@ const InventoryList: React.FC<InventoryListProps> = ({
               </div>
           </div>
       )}
+
+      {isPrintLocationModalOpen && (() => {
+        const previewLocationName = selectedPrintLocation === 'All'
+          ? (allLocationKeys[0] || 'Unassigned / General Storage')
+          : selectedPrintLocation;
+        const previewItems = itemsByLocation.get(previewLocationName) || [];
+        const previewTotalQty = previewItems.reduce((acc, i) => acc + (Number(i.quantity) || 0), 0);
+        const totalEquipmentArticles = (selectedPrintLocation === 'All' ? allLocationKeys : [selectedPrintLocation])
+          .reduce((acc, loc) => acc + (itemsByLocation.get(loc)?.length || 0), 0);
+        const totalEquipmentUnits = (selectedPrintLocation === 'All' ? allLocationKeys : [selectedPrintLocation])
+          .reduce((acc, loc) => {
+            const locItems = itemsByLocation.get(loc) || [];
+            return acc + locItems.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+          }, 0);
+
+        return (
+          <div 
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="bg-white rounded-lg shadow-2xl border border-gray-300 w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              {/* Modal Header */}
+              <div className="px-5 py-4 bg-gradient-to-r from-blue-900 to-indigo-900 text-white flex items-center justify-between flex-shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-white/10 rounded-md border border-white/20">
+                    <Printer className="w-5 h-5 text-blue-200" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-base sm:text-lg">Print Cabinet / Location Inventory</h3>
+                      <span className="text-[11px] px-2 py-0.5 rounded font-semibold bg-blue-400/20 text-blue-200 border border-blue-400/30">
+                        Portrait Paper
+                      </span>
+                    </div>
+                    <p className="text-xs text-blue-200 mt-0.5">
+                      Plain list of equipment and quantity per cabinet — formatted for cabinet door posting & physical audit
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsPrintLocationModalOpen(false)}
+                  className="p-1.5 rounded-md hover:bg-white/10 text-white/80 hover:text-white transition-colors"
+                  title="Close (Esc)"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 bg-gray-50/70">
+                {/* Print Settings Card */}
+                <div className="bg-white p-4 rounded-md border border-gray-200 shadow-sm space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Location Selection */}
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                        <MapPin className="w-3.5 h-3.5 text-blue-700" />
+                        Target Cabinet / Storage Location
+                      </label>
+                      <select
+                        value={selectedPrintLocation}
+                        onChange={(e) => setSelectedPrintLocation(e.target.value)}
+                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium cursor-pointer"
+                      >
+                        <option value="All">
+                          All Cabinets & Locations ({allLocationKeys.length} locations • {items.length} items)
+                        </option>
+                        {allLocationKeys.map((loc) => {
+                          const count = itemsByLocation.get(loc)?.length || 0;
+                          const units = (itemsByLocation.get(loc) || []).reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+                          return (
+                            <option key={loc} value={loc}>
+                              {loc} ({count} articles • {units} units)
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
+                    {/* Options / Scope info */}
+                    <div className="flex flex-col justify-end">
+                      {selectedPrintLocation === 'All' ? (
+                        <label className="flex items-start gap-2.5 p-2.5 rounded-md border border-blue-200 bg-blue-50/60 cursor-pointer hover:bg-blue-50 transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={printPageBreakPerCabinet}
+                            onChange={(e) => setPrintPageBreakPerCabinet(e.target.checked)}
+                            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <div className="text-xs">
+                            <span className="font-bold text-blue-950 block">Start each cabinet on a new page</span>
+                            <span className="text-blue-800 text-[11px] leading-tight block mt-0.5">
+                              Inserts a page break after each cabinet. Recommended for printing individual cabinet door posting sheets.
+                            </span>
+                          </div>
+                        </label>
+                      ) : (
+                        <div className="p-2.5 rounded-md border border-gray-200 bg-gray-50 text-xs">
+                          <span className="font-bold text-gray-900 block">Single Cabinet Print Mode</span>
+                          <span className="text-gray-600 text-[11px] block mt-0.5">
+                            Generating 1 physical inventory sheet specifically for <strong>{selectedPrintLocation}</strong>.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Summary Bar */}
+                  <div className="pt-3 border-t border-gray-100 flex flex-wrap items-center justify-between text-xs text-gray-600 gap-2">
+                    <div className="flex items-center gap-4">
+                      <span>Scope: <strong className="text-gray-900">{selectedPrintLocation === 'All' ? `All ${allLocationKeys.length} Cabinets` : selectedPrintLocation}</strong></span>
+                      <span>Total Articles: <strong className="text-blue-700">{totalEquipmentArticles}</strong></span>
+                      <span>Total Units: <strong className="text-indigo-700">{totalEquipmentUnits}</strong></span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-blue-800 font-medium">
+                      <FileText className="w-3.5 h-3.5" />
+                      Paper: Standard Portrait (8.5 × 11 / A4)
+                    </div>
+                  </div>
+                </div>
+
+                {/* Portrait Sheet Preview */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs text-gray-600 px-1">
+                    <span className="font-bold flex items-center gap-1.5 text-gray-800 uppercase tracking-wide text-[11px]">
+                      <Eye className="w-3.5 h-3.5 text-blue-700" />
+                      Portrait Sheet Print Preview
+                    </span>
+                    {selectedPrintLocation === 'All' && (
+                      <span className="text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded text-[11px] font-medium">
+                        Showing sample for 1st cabinet ({previewLocationName}). All {allLocationKeys.length} cabinets will print.
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Simulated Paper Sheet */}
+                  <div className="bg-white border border-gray-300 shadow-md rounded-sm p-6 sm:p-8 max-w-2xl mx-auto text-xs text-gray-900 font-sans">
+                    {/* Header */}
+                    <div className="text-center border-b-2 border-blue-900 pb-2 mb-3">
+                      <div className="text-[10px] text-gray-500 leading-tight">Republic of the Philippines</div>
+                      <div className="text-xs font-bold text-blue-900 leading-tight">DEPARTMENT OF EDUCATION</div>
+                      <div className="text-[10px] text-gray-500 leading-tight">Region VI - Western Visayas • Division of Iloilo • District of Leon</div>
+                      <div className="text-sm font-black text-red-800 tracking-wide my-0.5">LEON NATIONAL HIGH SCHOOL</div>
+                      <div className="text-[10px] font-bold text-blue-900">SCIENCE LABORATORY • INVENTORY MANAGEMENT SYSTEM</div>
+                      <div className="text-xs font-extrabold uppercase text-gray-900 mt-1">PHYSICAL INVENTORY LIST PER CABINET / STORAGE LOCATION</div>
+                      <div className="inline-block bg-blue-50 text-blue-800 border border-blue-200 px-2.5 py-0.5 rounded text-[11px] font-bold uppercase mt-1">
+                        STORAGE LOCATION: {previewLocationName}
+                      </div>
+                    </div>
+
+                    {/* Metadata */}
+                    <div className="flex justify-between items-center bg-gray-50 border border-gray-200 rounded px-2.5 py-1 text-[11px] mb-3 text-gray-600">
+                      <div>Location: <strong className="text-gray-900">{previewLocationName}</strong></div>
+                      <div>Count: <strong className="text-gray-900">{previewItems.length} articles • {previewTotalQty} units</strong></div>
+                      <div>Date: <strong className="text-gray-900">{new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</strong></div>
+                    </div>
+
+                    {/* Cabinet Table */}
+                    <div className="border border-gray-300 rounded overflow-hidden mb-3">
+                      <div className="bg-blue-900 text-white px-2.5 py-1 text-[11px] font-bold flex justify-between items-center">
+                        <span>LOCATION: {previewLocationName.toUpperCase()}</span>
+                        <span className="font-normal opacity-90 text-[10px]">{previewItems.length} items • {previewTotalQty} units</span>
+                      </div>
+                      <table className="w-full text-left text-[11px] border-collapse">
+                        <thead className="bg-gray-100 text-gray-700 font-bold border-b border-gray-300">
+                          <tr>
+                            <th className="p-1.5 text-center w-8 border-r border-gray-200">#</th>
+                            <th className="p-1.5 border-r border-gray-200">Equipment / Apparatus Description</th>
+                            <th className="p-1.5 border-r border-gray-200 w-28">Category</th>
+                            <th className="p-1.5 text-center w-14 border-r border-gray-200">Qty</th>
+                            <th className="p-1.5 text-center w-16">Condition</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                          {previewItems.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="p-4 text-center text-gray-400 italic">
+                                No equipment currently assigned to this location.
+                              </td>
+                            </tr>
+                          ) : (
+                            previewItems.slice(0, 8).map((item, idx) => (
+                              <tr key={item.id} className="hover:bg-gray-50/50">
+                                <td className="p-1.5 text-center font-bold text-gray-500 border-r border-gray-200">{idx + 1}</td>
+                                <td className="p-1.5 border-r border-gray-200">
+                                  <div className="font-semibold text-gray-900 leading-tight">{item.name}</div>
+                                  {item.description && (
+                                    <div className="text-[10px] text-gray-500 line-clamp-1">{stripMetadata(item.description)}</div>
+                                  )}
+                                </td>
+                                <td className="p-1.5 text-gray-600 border-r border-gray-200">{item.category}</td>
+                                <td className="p-1.5 text-center font-bold text-blue-900 border-r border-gray-200">{item.quantity}</td>
+                                <td className="p-1.5 text-center text-[10px] text-gray-700">{item.condition}</td>
+                              </tr>
+                            ))
+                          )}
+                          {previewItems.length > 8 && (
+                            <tr className="bg-gray-50 text-gray-500 italic text-[10px]">
+                              <td colSpan={5} className="p-1.5 text-center">
+                                ... and {previewItems.length - 8} more equipment items in this cabinet (all will be printed on full page)
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                        <tfoot className="bg-gray-100 font-bold border-t border-gray-300">
+                          <tr>
+                            <td colSpan={3} className="p-1.5 text-right uppercase text-[10px]">Cabinet Subtotal:</td>
+                            <td className="p-1.5 text-center text-blue-900 font-extrabold">{previewTotalQty}</td>
+                            <td className="p-1.5 text-center text-[10px] text-gray-500">{previewItems.length} items</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+
+                    {/* Sign-off Preview */}
+                    <div className="grid grid-cols-2 gap-6 pt-3 border-t border-gray-200 text-[10px]">
+                      <div>
+                        <div className="font-bold text-gray-700 mb-6">Counted & Inspected by:</div>
+                        <div className="border-b border-gray-400 pb-0.5"></div>
+                        <div className="text-gray-500 mt-0.5">Science Teacher / Laboratory Custodian</div>
+                        <div className="text-gray-400 mt-0.5">Date: ____________________</div>
+                      </div>
+                      <div>
+                        <div className="font-bold text-gray-700 mb-6">Verified by:</div>
+                        <div className="border-b border-gray-400 pb-0.5"></div>
+                        <div className="text-gray-500 mt-0.5">Science Coordinator / School Head</div>
+                        <div className="text-gray-400 mt-0.5">Date: ____________________</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-5 py-3.5 bg-gray-100 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-3 flex-shrink-0">
+                <div className="text-xs text-gray-500 text-center sm:text-left">
+                  Portrait print opens directly in system print dialog with clean printer-optimized layout.
+                </div>
+                <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+                  <button
+                    onClick={() => setIsPrintLocationModalOpen(false)}
+                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-200 transition-colors text-sm font-medium"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      handlePrintCabinetList(selectedPrintLocation, printPageBreakPerCabinet);
+                      setIsPrintLocationModalOpen(false);
+                    }}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors shadow-sm text-sm font-bold flex items-center gap-2 cursor-pointer"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print Cabinet List (Portrait)</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {managingFilesItem && (
         <ItemFileManagerModal

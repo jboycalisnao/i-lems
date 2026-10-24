@@ -3,10 +3,13 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Html5QrcodeScanner } from 'html5-qrcode';
-import { InventoryItem, BorrowRecord, InventoryBox } from '../types';
-import { Scan, Search, Camera, X, Box, MapPin, Activity, HandPlatter, RotateCcw, AlertTriangle, Tag, CheckCircle, ClipboardList, FileText, Printer, ChevronRight, PackageOpen, User } from 'lucide-react';
+import { InventoryItem, BorrowRecord, InventoryBox, PropertyItem } from '../types';
+import { Scan, Search, Camera, X, Box, MapPin, Activity, HandPlatter, RotateCcw, AlertTriangle, Tag, CheckCircle, ClipboardList, FileText, Printer, ChevronRight, PackageOpen, User, Building2, Usb, ExternalLink } from 'lucide-react';
 import { getCategoryIcon, getCategoryColor } from '../constants';
 import { getBarcodeBaseId, getUnitBarcode } from '../utils/barcode';
+import usbScannerService from '../services/usbScannerService';
+import { lookupScannedBarcode } from '../services/scannerLookupService';
+import { USBScannerPairModal } from './USBScannerPairModal';
 
 interface ScannerProps {
   items: InventoryItem[];
@@ -32,9 +35,14 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
 
   // --- Search Mode State ---
   const [foundItem, setFoundItem] = useState<InventoryItem | null>(null);
+  const [foundPropertyItem, setFoundPropertyItem] = useState<PropertyItem | null>(null);
   const [scannedUniqueId, setScannedUniqueId] = useState<string>('');
   const [relatedRecords, setRelatedRecords] = useState<BorrowRecord[]>([]);
   const [foundBox, setFoundBox] = useState<InventoryBox | null>(null);
+
+  // USB Barcode Scanner Dongle state
+  const [isUsbPairModalOpen, setIsUsbPairModalOpen] = useState(false);
+  const [usbScannerStatus, setUsbScannerStatus] = useState(() => usbScannerService.getStatus());
 
   // --- Audit Mode State ---
   const [auditSelectedItemId, setAuditSelectedItemId] = useState<string>('');
@@ -75,6 +83,22 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
         return () => clearTimeout(timer);
     }
   }, [scanFeedback]);
+
+  // Subscribe to USB barcode scanner dongle and WebHID
+  useEffect(() => {
+    const unsubStatus = usbScannerService.onStatus((status) => {
+      setUsbScannerStatus(status);
+    });
+
+    const unsubScan = usbScannerService.onScan((code) => {
+      handleScan(code);
+    });
+
+    return () => {
+      unsubStatus();
+      unsubScan();
+    };
+  }, [mode, auditSelectedItemId, items, borrowRecords]);
 
   // --- Logic Shared ---
   
@@ -153,62 +177,55 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
 
   // --- Search Mode Logic ---
 
-  const handleSearch = (query: string) => {
+  const handleSearch = async (query: string) => {
     const trimmedQuery = query.trim();
     if (!trimmedQuery) return;
-    const upperQuery = trimmedQuery.toUpperCase();
 
-    let item: InventoryItem | undefined;
-    let box: InventoryBox | undefined | null = null;
-    
-    // Check if it matches a Box ID first
-    for (const inv of items) {
-        if (inv.boxes) {
-            const match = inv.boxes.find(b => b.id === upperQuery);
-            if (match) {
-                item = inv;
-                box = match;
-                break;
-            }
-        }
-    }
+    try {
+      const result = await lookupScannedBarcode(trimmedQuery, items, borrowRecords);
 
-    if (!item) {
-        // 1. Exact ID match (ShortID or UUID)
-        item = items.find(i => i.id === upperQuery || i.shortId === upperQuery);
-        
-        // 2. Name match (Partial) if no ID match found
-        if (!item) {
-            // Find best match for name
-            item = items.find(i => i.name.toLowerCase().includes(trimmedQuery.toLowerCase()));
-        }
+      if (result.matchType === 'property_item' && result.propertyItem) {
+        setFoundPropertyItem(result.propertyItem);
+        setFoundItem(null);
+        setFoundBox(null);
+        setRelatedRecords([]);
+        setScannedUniqueId(result.cleanedCode);
+        setScanFeedback({ message: `Property Item found: ${result.propertyItem.description}`, type: 'success' });
+        return;
+      }
 
-        // 3. Sequence match (PREFIX-NUM-SEQ)
-        if (!item && upperQuery.includes('-')) {
-            const parts = upperQuery.split('-');
-            if (parts.length >= 3) {
-                const potentialShortId = parts.slice(0, parts.length - 1).join('-');
-                item = items.find(i => i.shortId === potentialShortId);
-            }
-        }
-    }
+      if (result.matchType === 'lab_item' && result.labItem) {
+        setFoundPropertyItem(null);
+        setFoundItem(result.labItem);
+        setFoundBox(result.matchedBox || null);
+        setScannedUniqueId(result.specificUnitId || '');
+        setRelatedRecords(result.activeLoans || []);
+        setScanFeedback(null);
+        return;
+      }
 
-    if (item) {
+      // Fallback manual name search if no direct lookup match
+      const upperQuery = trimmedQuery.toUpperCase();
+      let item = items.find(i => i.id === upperQuery || i.shortId === upperQuery || i.name.toLowerCase().includes(trimmedQuery.toLowerCase()));
+
+      if (item) {
+        setFoundPropertyItem(null);
         setFoundItem(item);
-        setFoundBox(box || null);
-        setScanFeedback(null); // Clear errors
-        
-        // If query was just a name, don't set unique ID. If it looked like a specific barcode, set it.
-        const isSpecificFormat = /^[A-Z]{3,}-\d{4}-\d{3}$/.test(upperQuery);
-        setScannedUniqueId((isSpecificFormat && !box) ? upperQuery : '');
-        
+        setFoundBox(null);
+        setScannedUniqueId('');
         const activeRecs = borrowRecords.filter(r => r.itemId === item!.id && r.status === 'Borrowed');
         setRelatedRecords(activeRecs);
-    } else {
+        setScanFeedback(null);
+      } else {
+        setFoundPropertyItem(null);
         setFoundItem(null);
         setFoundBox(null);
         setRelatedRecords([]);
         setScanFeedback({ message: `Item not found: "${query}"`, type: 'error' });
+      }
+    } catch (e) {
+      console.error('Search error:', e);
+      setScanFeedback({ message: `Search failed for: "${query}"`, type: 'error' });
     }
   };
 
@@ -457,7 +474,37 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
                 <h2 className="text-2xl font-bold text-gray-800">Scan or Search Equipment</h2>
                 
                 {scanMethod === 'manual' ? (
-                    <div className="w-full max-w-lg">
+                    <div className="w-full max-w-lg space-y-4">
+                        {/* USB Barcode Dongle Connection Widget */}
+                        <div className="w-full bg-gradient-to-r from-blue-50/90 to-indigo-50/90 border border-blue-200 rounded-xl p-3 flex items-center justify-between shadow-2xs">
+                            <div className="flex items-center gap-3">
+                                <div className="w-9 h-9 rounded-lg bg-white border border-blue-200 flex items-center justify-center text-blue-700 shadow-2xs">
+                                    <Usb className="w-5 h-5" />
+                                </div>
+                                <div className="text-left">
+                                    <div className="flex items-center gap-2">
+                                        <span className="relative flex h-2 w-2">
+                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                        </span>
+                                        <p className="text-xs font-bold text-gray-900">
+                                            {usbScannerStatus.mode === 'webhid' ? 'USB Scanner Paired' : 'USB 2.4G Dongle Ready'}
+                                        </p>
+                                    </div>
+                                    <p className="text-[11px] text-gray-500 font-medium truncate max-w-[210px] sm:max-w-xs">
+                                        {usbScannerStatus.mode === 'webhid' ? usbScannerStatus.deviceName : 'Pull barcode trigger anytime to search'}
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setIsUsbPairModalOpen(true)}
+                                className="px-2.5 py-1.5 text-xs font-bold text-blue-700 bg-white hover:bg-blue-50 rounded-lg border border-blue-200 transition-colors shadow-2xs flex-shrink-0"
+                            >
+                                Dongle Settings
+                            </button>
+                        </div>
+
                         <div className="relative">
                             <div className="relative">
                                 <input
@@ -488,6 +535,94 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
                     </div>
                 )}
             </div>
+
+            {/* Property Asset Search Result Card */}
+            {foundPropertyItem && (
+                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className={`${CardGlass} overflow-hidden border border-amber-300`}>
+                        <div className="bg-gradient-to-r from-amber-500/10 via-amber-600/10 to-amber-700/10 p-6 border-b border-amber-200 flex justify-between items-start">
+                            <div>
+                                <div className="flex flex-wrap items-center gap-2 mb-2">
+                                    {foundPropertyItem.pisCode && (
+                                        <span className="px-2.5 py-1 bg-amber-600 text-white rounded text-xs font-mono font-black shadow-2xs tracking-wider">
+                                            {foundPropertyItem.pisCode}
+                                        </span>
+                                    )}
+                                    <span className="px-2 py-1 bg-amber-100 text-amber-800 rounded text-xs font-bold border border-amber-200">
+                                        {foundPropertyItem.category || 'Property Asset'}
+                                    </span>
+                                    <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-mono font-medium">
+                                        {foundPropertyItem.propertyNumber}
+                                    </span>
+                                </div>
+                                <h3 className="text-2xl font-black text-gray-900">{foundPropertyItem.description}</h3>
+                            </div>
+                            <div className="p-3 bg-white rounded-lg shadow-sm border border-amber-200 text-amber-700">
+                                <Building2 className="w-6 h-6" />
+                            </div>
+                        </div>
+
+                        <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="space-y-4">
+                                <div className="p-3.5 bg-amber-50/80 border border-amber-200 rounded-lg">
+                                    <div className="flex items-start gap-2.5">
+                                        <MapPin className="w-5 h-5 text-amber-700 flex-shrink-0 mt-0.5" />
+                                        <div>
+                                            <p className="text-[11px] font-bold uppercase text-amber-800 tracking-wide">Storage / Cabinet Location</p>
+                                            <p className="text-base font-extrabold text-gray-900 mt-0.5">
+                                                {foundPropertyItem.location || 'Science Laboratory'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-start space-x-3">
+                                    <Activity className="w-5 h-5 text-gray-400 mt-0.5" />
+                                    <div>
+                                        <p className="text-xs font-semibold text-gray-500 uppercase">Condition</p>
+                                        <span className="inline-block mt-0.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-800 border border-green-200">
+                                            {foundPropertyItem.condition || 'Serviceable'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="space-y-3">
+                                <div>
+                                    <p className="text-xs font-semibold text-gray-500 uppercase">Asset Name</p>
+                                    <p className="text-sm font-bold text-gray-800">{foundPropertyItem.name || 'Standard Equipment'}</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs font-semibold text-gray-500 uppercase">Serial Number</p>
+                                    <p className="text-sm font-mono text-gray-800">{foundPropertyItem.serialNumber || 'N/A'}</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs font-semibold text-gray-500 uppercase">Source of Fund</p>
+                                    <p className="text-sm font-medium text-gray-800">{foundPropertyItem.sourceOfFund || 'DepEd DCP'}</p>
+                                </div>
+                            </div>
+
+                            <div className="space-y-3">
+                                <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                                    <p className="text-xs font-semibold text-gray-500 uppercase flex items-center gap-1.5">
+                                        <User className="w-3.5 h-3.5" /> Custodian Officer
+                                    </p>
+                                    <p className="text-sm font-bold text-gray-900 mt-0.5">
+                                        {foundPropertyItem.custodian || 'Science Department Head'}
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => navigate('/property/list')}
+                                    className="w-full py-2.5 px-3 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 shadow-xs"
+                                >
+                                    <ExternalLink className="w-4 h-4" /> View in Property Inventory
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                 </div>
+            )}
 
             {/* Search Result Card */}
             {foundItem && (
@@ -743,6 +878,12 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
               )}
           </div>
       )}
+
+      {/* USB Barcode Scanner Pair Modal */}
+      <USBScannerPairModal
+        isOpen={isUsbPairModalOpen}
+        onClose={() => setIsUsbPairModalOpen(false)}
+      />
     </div>
   );
 };

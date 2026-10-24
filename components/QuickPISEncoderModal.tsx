@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PropertyItem, PropertyCondition } from '../types';
 import { PROPERTY_CATEGORIES, FUND_SOURCES, generateNextPropertyNumber, getPropertyByPIS } from '../services/propertyStorageService';
-import { X, Search, CheckCircle2, ArrowRight, Building2, Tag, Save, Sparkles, AlertCircle } from 'lucide-react';
+import { X, Search, CheckCircle2, ArrowRight, Building2, Tag, Save, Sparkles, AlertCircle, Check } from 'lucide-react';
 import LocationSearchSelect from './LocationSearchSelect';
+import PropertyNameSearchSelect from './PropertyNameSearchSelect';
 
 interface QuickPISEncoderModalProps {
   existingItems: PropertyItem[];
@@ -22,6 +23,7 @@ export const QuickPISEncoderModal: React.FC<QuickPISEncoderModalProps> = ({
   const [searchedCode, setSearchedCode] = useState('');
   const [foundItem, setFoundItem] = useState<PropertyItem | null>(null);
   const [isNew, setIsNew] = useState(false);
+  const [syncedFromName, setSyncedFromName] = useState<string | null>(null);
 
   // New property form state linked to this PIS code
   const [newProp, setNewProp] = useState<Partial<PropertyItem>>({
@@ -258,15 +260,49 @@ export const QuickPISEncoderModal: React.FC<QuickPISEncoderModalProps> = ({
                 </div>
 
                 <div className="sm:col-span-2">
-                  <label className="block font-bold text-gray-700 mb-1">Article / Property Name *</label>
-                  <input
-                    type="text"
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-bold text-gray-700">Article / Property Name *</label>
+                    {syncedFromName ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-sm border border-emerald-300">
+                        <Check className="w-3 h-3 text-emerald-600" />
+                        Details auto-copied from: {syncedFromName}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-blue-700 font-semibold flex items-center gap-1">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Search to copy specs & details
+                      </span>
+                    )}
+                  </div>
+                  <PropertyNameSearchSelect
                     value={newProp.name || ''}
-                    onChange={(e) => setNewProp(prev => ({ ...prev, name: e.target.value }))}
-                    placeholder="e.g. Acer TravelMate B3 Laptop 11.6&quot;"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
+                    existingItems={existingItems}
+                    onChange={(name, templateItem) => {
+                      if (templateItem) {
+                        setSyncedFromName(templateItem.name);
+                        setNewProp(prev => ({
+                          ...prev,
+                          name,
+                          category: templateItem.category || prev.category,
+                          description: templateItem.description || prev.description,
+                          unit: templateItem.unit || prev.unit,
+                          unitValue: templateItem.unitValue ?? prev.unitValue,
+                          location: templateItem.location || prev.location,
+                          custodian: templateItem.custodian || prev.custodian,
+                          sourceOfFund: templateItem.sourceOfFund || prev.sourceOfFund,
+                          inventoryType: templateItem.inventoryType || prev.inventoryType
+                        }));
+                      } else {
+                        setSyncedFromName(null);
+                        setNewProp(prev => ({ ...prev, name }));
+                      }
+                    }}
+                    placeholder="Search existing property name or type new..."
                     required
                   />
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Select an existing item name to automatically copy its category, specifications, unit value, and custodian.
+                  </p>
                 </div>
 
                 <div>

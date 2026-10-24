@@ -1,15 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { PropertyItem, PropertyCondition, PropertyInventoryType } from '../types';
-import { PROPERTY_CATEGORIES, FUND_SOURCES, generateNextPropertyNumber, generateNextPISCode } from '../services/propertyStorageService';
-import { X, Save, Sparkles, Building2, Layers, DollarSign, User, MapPin, Tag } from 'lucide-react';
+import { PROPERTY_CATEGORIES, FUND_SOURCES, generateNextPropertyNumber, generateNextPISCode, generateNextPISCodes } from '../services/propertyStorageService';
+import { X, Save, Sparkles, Building2, Layers, DollarSign, User, MapPin, Tag, CheckSquare, ChevronDown, ChevronUp } from 'lucide-react';
 import LocationSearchSelect from './LocationSearchSelect';
+import PropertyNameSearchSelect from './PropertyNameSearchSelect';
 
 interface PropertyFormModalProps {
   initialData?: PropertyItem;
   existingItems: PropertyItem[];
   initialPISCode?: string;
   onSubmit: (item: PropertyItem) => void;
+  onSubmitBulk?: (items: PropertyItem[]) => void;
   onCancel: () => void;
 }
 
@@ -18,6 +20,7 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
   existingItems,
   initialPISCode,
   onSubmit,
+  onSubmitBulk,
   onCancel
 }) => {
   const isEditing = Boolean(initialData?.id);
@@ -47,7 +50,39 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
     };
   });
 
+  const [copiedTemplateName, setCopiedTemplateName] = useState<string | null>(null);
+  const [createSeparateRecords, setCreateSeparateRecords] = useState<boolean>(false);
+  const [showAllUnitPIS, setShowAllUnitPIS] = useState<boolean>(false);
+
+  // Maintain individual PIS codes for all physical units
+  const [unitPisCodes, setUnitPisCodes] = useState<string[]>(() => {
+    if (initialData?.pisCodes && initialData.pisCodes.length > 0) {
+      return [...initialData.pisCodes];
+    }
+    const initialCode = initialData?.pisCode || initialPISCode || generateNextPISCode(existingItems);
+    const qty = initialData?.quantity || 1;
+    if (qty > 1) {
+      return generateNextPISCodes(existingItems, qty);
+    }
+    return [initialCode];
+  });
+
   const [errorMsg, setErrorMsg] = useState('');
+
+  // Synchronize unit PIS codes array when quantity changes
+  useEffect(() => {
+    const qty = Math.max(1, formData.quantity || 1);
+    setUnitPisCodes(prev => {
+      if (prev.length === qty) return prev;
+      if (prev.length > qty) {
+        return prev.slice(0, qty);
+      }
+      // Expand with sequential codes
+      const needed = qty - prev.length;
+      const additional = generateNextPISCodes(existingItems, needed);
+      return [...prev, ...additional];
+    });
+  }, [formData.quantity, existingItems]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
@@ -105,6 +140,51 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
     const unitVal = Math.max(0, formData.unitValue || 0);
     const totalVal = qty * unitVal;
 
+    // Ensure unitPisCodes has length == qty
+    let finalUnitPis = [...unitPisCodes];
+    if (finalUnitPis.length < qty) {
+      const generated = generateNextPISCodes(existingItems, qty);
+      finalUnitPis = generated;
+    } else if (finalUnitPis.length > qty) {
+      finalUnitPis = finalUnitPis.slice(0, qty);
+    }
+
+    // Option A: Batch create individual records for each unit with identical information but distinct PIS stickers
+    if (qty > 1 && createSeparateRecords && onSubmitBulk) {
+      const bulkItems: PropertyItem[] = finalUnitPis.map((code, index) => {
+        const propNum = index === 0 
+          ? formData.propertyNumber!.trim() 
+          : `${formData.propertyNumber!.trim()}-${String(index + 1).padStart(2, '0')}`;
+        return {
+          id: crypto.randomUUID(),
+          propertyNumber: propNum,
+          name: formData.name!.trim(),
+          category: formData.category || 'General Property',
+          description: formData.description?.trim() || '',
+          serialNumber: formData.serialNumber?.trim() || '',
+          quantity: 1,
+          unit: formData.unit?.trim() || 'unit',
+          unitValue: unitVal,
+          totalValue: unitVal,
+          location: formData.location!.trim(),
+          custodian: formData.custodian!.trim(),
+          condition: (formData.condition as PropertyCondition) || 'Serviceable',
+          acquisitionDate: formData.acquisitionDate || new Date().toISOString().split('T')[0],
+          sourceOfFund: formData.sourceOfFund || 'School MOOE',
+          inventoryType: (formData.inventoryType as PropertyInventoryType) || (unitVal >= 50000 ? 'Capital Outlay' : 'Semi-Expendable'),
+          parNumber: formData.parNumber?.trim() || '',
+          notes: formData.notes?.trim() || '',
+          lastInspected: formData.lastInspected || '',
+          shortId: propNum.replace(/[^a-zA-Z0-9]/g, '').slice(-6).toUpperCase(),
+          pisCode: code.trim(),
+          pisCodes: [code.trim()]
+        };
+      });
+      onSubmitBulk(bulkItems);
+      return;
+    }
+
+    // Option B: Grouped under 1 asset record with all linked unit PIS codes
     const finalItem: PropertyItem = {
       id: formData.id || crypto.randomUUID(),
       propertyNumber: formData.propertyNumber.trim(),
@@ -126,7 +206,8 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
       notes: formData.notes?.trim() || '',
       lastInspected: formData.lastInspected || '',
       shortId: formData.shortId || formData.propertyNumber.replace(/[^a-zA-Z0-9]/g, '').slice(-6).toUpperCase(),
-      pisCode: formData.pisCode?.trim() || undefined
+      pisCode: finalUnitPis[0]?.trim() || formData.pisCode?.trim() || undefined,
+      pisCodes: qty > 1 ? finalUnitPis.map(c => c.trim()) : (formData.pisCode ? [formData.pisCode.trim()] : undefined)
     };
 
     onSubmit(finalItem);
@@ -174,38 +255,137 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
             </div>
 
             {/* PIS Code Linker Banner */}
-            <div className="bg-amber-50 border-2 border-amber-300 rounded-md p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-sm bg-[#FFF000] border-2 border-black flex items-center justify-center font-black text-xs text-black shadow-sm flex-shrink-0">
-                  PIS
+            <div className="bg-amber-50 border-2 border-amber-300 rounded-md p-4 space-y-3">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-sm bg-[#FFF000] border-2 border-black flex items-center justify-center font-black text-xs text-black shadow-sm flex-shrink-0">
+                    PIS
+                  </div>
+                  <div>
+                    <label className="block text-xs font-black text-amber-950 uppercase tracking-wide">
+                      Property Inventory Sticker (PIS) Code
+                    </label>
+                    <p className="text-[11px] text-amber-800">
+                      {(formData.quantity || 1) > 1 
+                        ? `${formData.quantity} physical units detected. Each unit gets its own unique PIS sticker.`
+                        : 'Unique sticker code attached to this physical property.'}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-black text-amber-950 uppercase tracking-wide">
-                    Property Inventory Sticker (PIS) Code
-                  </label>
-                  <p className="text-[11px] text-amber-800">
-                    Unique sticker code attached to this physical property
-                  </p>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  {(formData.quantity || 1) === 1 ? (
+                    <>
+                      <input
+                        type="text"
+                        name="pisCode"
+                        value={unitPisCodes[0] || formData.pisCode || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setFormData(prev => ({ ...prev, pisCode: val }));
+                          setUnitPisCodes([val]);
+                        }}
+                        placeholder="e.g. PIS-26-04928"
+                        className="px-3 py-1.5 text-sm border-2 border-amber-400 bg-white rounded-md font-mono font-black text-amber-950 focus:ring-2 focus:ring-amber-500 focus:outline-none w-full sm:w-44 text-center"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextCode = generateNextPISCode(existingItems);
+                          setFormData(prev => ({ ...prev, pisCode: nextCode }));
+                          setUnitPisCodes([nextCode]);
+                        }}
+                        title="Generate next sequential PIS Code"
+                        className="px-3 py-1.5 bg-amber-300 hover:bg-amber-400 text-amber-950 rounded-sm text-xs font-bold transition-colors whitespace-nowrap shadow-sm border border-amber-400"
+                      >
+                        Next PIS
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newCodes = generateNextPISCodes(existingItems, formData.quantity || 1);
+                        setUnitPisCodes(newCodes);
+                        setFormData(prev => ({ ...prev, pisCode: newCodes[0] }));
+                      }}
+                      className="px-3 py-1.5 bg-amber-300 hover:bg-amber-400 text-amber-950 rounded-sm text-xs font-black transition-colors whitespace-nowrap shadow-sm border border-amber-400 flex items-center gap-1.5"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Auto-Sequence All {formData.quantity} PIS
+                    </button>
+                  )}
                 </div>
               </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <input
-                  type="text"
-                  name="pisCode"
-                  value={formData.pisCode || ''}
-                  onChange={handleChange}
-                  placeholder="e.g. PIS-26-04928"
-                  className="px-3 py-1.5 text-sm border-2 border-amber-400 bg-white rounded-md font-mono font-black text-amber-950 focus:ring-2 focus:ring-amber-500 focus:outline-none w-full sm:w-44 text-center"
-                />
-                <button
-                  type="button"
-                  onClick={() => setFormData(prev => ({ ...prev, pisCode: generateNextPISCode(existingItems) }))}
-                  title="Generate next sequential PIS Code"
-                  className="px-3 py-1.5 bg-amber-300 hover:bg-amber-400 text-amber-950 rounded-sm text-xs font-bold transition-colors whitespace-nowrap shadow-sm border border-amber-400"
-                >
-                  Next PIS
-                </button>
-              </div>
+
+              {/* Multi-Unit Details & PIS List when quantity > 1 */}
+              {(formData.quantity || 1) > 1 && (
+                <div className="pt-2 border-t border-amber-200/80 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                    <span className="font-bold text-amber-950">
+                      Assigned Stickers: {unitPisCodes.slice(0, formData.quantity).filter(Boolean).length} of {formData.quantity} Units
+                    </span>
+                    <div className="flex items-center gap-3">
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer text-amber-950 font-bold">
+                        <input
+                          type="checkbox"
+                          checked={createSeparateRecords}
+                          onChange={(e) => setCreateSeparateRecords(e.target.checked)}
+                          className="rounded text-amber-600 focus:ring-amber-500"
+                        />
+                        <span>Create as separate inventory rows</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowAllUnitPIS(prev => !prev)}
+                        className="text-amber-800 hover:text-amber-950 font-bold underline text-[11px] flex items-center gap-0.5"
+                      >
+                        {showAllUnitPIS ? 'Collapse Unit List' : 'View / Edit Each Unit PIS'}
+                        {showAllUnitPIS ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Summary preview tags */}
+                  {!showAllUnitPIS && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {unitPisCodes.slice(0, Math.min(8, formData.quantity || 1)).map((code, idx) => (
+                        <span key={idx} className="font-mono text-[11px] font-bold px-2 py-0.5 bg-white border border-amber-300 rounded text-amber-900 shadow-2xs">
+                          Unit #{idx + 1}: {code || 'Unassigned'}
+                        </span>
+                      ))}
+                      {(formData.quantity || 1) > 8 && (
+                        <span className="text-[11px] font-semibold text-amber-800 self-center">
+                          +{ (formData.quantity || 1) - 8 } more units
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Expandable unit-by-unit PIS code editor */}
+                  {showAllUnitPIS && (
+                    <div className="bg-white/90 p-3 rounded-md border border-amber-300 max-h-52 overflow-y-auto divide-y divide-amber-100 text-xs">
+                      {Array.from({ length: formData.quantity || 1 }).map((_, idx) => (
+                        <div key={idx} className="py-1.5 flex items-center justify-between gap-2">
+                          <span className="font-bold text-gray-700 w-16">Unit #{idx + 1}</span>
+                          <input
+                            type="text"
+                            value={unitPisCodes[idx] || ''}
+                            onChange={(e) => {
+                              const next = [...unitPisCodes];
+                              next[idx] = e.target.value;
+                              setUnitPisCodes(next);
+                              if (idx === 0) setFormData(prev => ({ ...prev, pisCode: e.target.value }));
+                            }}
+                            placeholder={`PIS-26-${String(idx + 1).padStart(5, '0')}`}
+                            className="flex-1 px-2.5 py-1 text-xs border border-amber-300 rounded font-mono font-bold text-amber-950 bg-amber-50/30 focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -252,16 +432,42 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-xs font-bold text-gray-700 mb-1">
-                  Article / Property Name <span className="text-red-500">*</span>
+                <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center justify-between">
+                  <span>Article / Property Name <span className="text-red-500">*</span></span>
+                  {copiedTemplateName && (
+                    <span className="text-[11px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 flex items-center gap-1 animate-in fade-in">
+                      <Sparkles className="w-3 h-3 text-blue-600" />
+                      Synced details from: {copiedTemplateName}
+                    </span>
+                  )}
                 </label>
-                <input
-                  type="text"
-                  name="name"
+                <PropertyNameSearchSelect
                   value={formData.name || ''}
-                  onChange={handleChange}
-                  placeholder="e.g. Acer TravelMate B3 Laptop 11.6&quot;"
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
+                  existingItems={existingItems}
+                  onChange={(newName, template) => {
+                    if (template) {
+                      setCopiedTemplateName(template.name);
+                      setFormData(prev => ({
+                        ...prev,
+                        name: newName,
+                        category: template.category || prev.category,
+                        description: template.description || prev.description,
+                        unit: template.unit || prev.unit,
+                        unitValue: template.unitValue !== undefined ? template.unitValue : prev.unitValue,
+                        totalValue: (prev.quantity || 1) * (template.unitValue || 0),
+                        location: template.location || prev.location,
+                        custodian: template.custodian || prev.custodian,
+                        condition: template.condition || prev.condition,
+                        sourceOfFund: template.sourceOfFund || prev.sourceOfFund,
+                        inventoryType: template.inventoryType || prev.inventoryType,
+                        parNumber: template.parNumber || prev.parNumber
+                      }));
+                    } else {
+                      setCopiedTemplateName(null);
+                      setFormData(prev => ({ ...prev, name: newName }));
+                    }
+                  }}
+                  placeholder="Search existing property or type new name..."
                   required
                 />
               </div>

@@ -210,6 +210,26 @@ export const mapPropertyItem = (data: any): PropertyItem => {
     ? toNumber(data.totalValue) 
     : (quantity * unitValue);
 
+  // Extract pisCodes if stored as array or embedded in notes metadata
+  let pisCodes: string[] | undefined = Array.isArray(data.pisCodes || data.pis_codes)
+    ? (data.pisCodes || data.pis_codes).filter(Boolean).map(String)
+    : undefined;
+
+  let notes = String(data.notes || '');
+  if (notes.includes('<!--SYSTEM_PIS_CODES:')) {
+    const metaMatch = notes.match(/<!--SYSTEM_PIS_CODES:(.*?)-->/);
+    if (metaMatch && metaMatch[1]) {
+      try {
+        const parsed = JSON.parse(metaMatch[1]);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          pisCodes = parsed.map(String);
+        }
+      } catch {}
+    }
+  }
+
+  const primaryPis = data.pisCode || data.pis_code || (pisCodes && pisCodes.length > 0 ? pisCodes[0] : undefined);
+
   return {
     id: String(data.id || crypto.randomUUID()),
     propertyNumber: String(data.propertyNumber || data.property_number || `LNHS-PROP-${Date.now().toString().slice(-4)}`),
@@ -228,10 +248,11 @@ export const mapPropertyItem = (data: any): PropertyItem => {
     sourceOfFund: String(data.sourceOfFund || data.source_of_fund || 'School MOOE'),
     inventoryType: (data.inventoryType || data.inventory_type || (unitValue >= 50000 ? 'Capital Outlay' : 'Semi-Expendable')) as PropertyInventoryType,
     parNumber: data.parNumber || data.par_number || '',
-    notes: String(data.notes || ''),
+    notes,
     lastInspected: data.lastInspected || data.last_inspected || '',
     shortId: data.shortId || data.short_id || '',
-    pisCode: data.pisCode || data.pis_code || undefined
+    pisCode: primaryPis,
+    pisCodes: pisCodes && pisCodes.length > 0 ? pisCodes : (primaryPis ? [primaryPis] : undefined)
   };
 };
 
@@ -356,6 +377,19 @@ export const savePropertyItem = async (item: PropertyItem): Promise<{ success: b
   }
   item.totalValue = item.quantity * item.unitValue;
 
+  // Ensure pisCode is set to first pisCodes element if available
+  if (item.pisCodes && item.pisCodes.length > 0 && !item.pisCode) {
+    item.pisCode = item.pisCodes[0];
+  }
+
+  // If item has multiple PIS codes, embed them in notes metadata
+  let serializedNotes = item.notes?.trim() || '';
+  if (item.pisCodes && item.pisCodes.length > 1) {
+    const cleanNotes = serializedNotes.replace(/<!--SYSTEM_PIS_CODES:.*?-->/g, '').trim();
+    const tag = `<!--SYSTEM_PIS_CODES:${JSON.stringify(item.pisCodes)}-->`;
+    serializedNotes = cleanNotes ? `${cleanNotes}\n${tag}` : tag;
+  }
+
   const dbPayload = {
     id: item.id,
     property_number: item.propertyNumber.trim(),
@@ -375,7 +409,7 @@ export const savePropertyItem = async (item: PropertyItem): Promise<{ success: b
     source_of_fund: item.sourceOfFund,
     inventory_type: item.inventoryType,
     par_number: item.parNumber?.trim() || null,
-    notes: item.notes?.trim() || '',
+    notes: serializedNotes,
     last_inspected: item.lastInspected || null,
     short_id: item.shortId
   };
@@ -419,19 +453,35 @@ export const savePropertyItem = async (item: PropertyItem): Promise<{ success: b
     rememberLocation(item.location);
   }
 
-  // 3. Track highest PIS code sequence persistently
-  if (item.pisCode && item.pisCode.startsWith('PIS-')) {
-    const parts = item.pisCode.split('-');
-    if (parts.length >= 3) {
-      const yr = parts[1];
-      const num = parseInt(parts[2], 10);
-      if (!isNaN(num)) {
-        recordPISSequenceUsed(num, yr);
+  // 3. Track highest PIS code sequence persistently across all codes
+  const allCodesToTrack = [item.pisCode, ...(item.pisCodes || [])].filter(Boolean) as string[];
+  allCodesToTrack.forEach(code => {
+    if (code.startsWith('PIS-')) {
+      const parts = code.split('-');
+      if (parts.length >= 3) {
+        const yr = parts[1];
+        const num = parseInt(parts[2], 10);
+        if (!isNaN(num)) {
+          recordPISSequenceUsed(num, yr);
+        }
       }
     }
-  }
+  });
 
   return { success: true, item };
+};
+
+/**
+ * Bulk save property items (e.g. creating individual records with distinct PIS stickers)
+ */
+export const savePropertyItemsBulk = async (newItems: PropertyItem[]): Promise<{ success: boolean; count: number; message?: string }> => {
+  if (!newItems || newItems.length === 0) return { success: true, count: 0 };
+  let count = 0;
+  for (const it of newItems) {
+    const res = await savePropertyItem(it);
+    if (res.success) count++;
+  }
+  return { success: count > 0, count };
 };
 
 /**
@@ -579,15 +629,18 @@ export const getHighestPISSequence = (items: PropertyItem[] = [], yearPrefix = '
   // 2. Scan all existing items from the database/registry
   if (Array.isArray(items)) {
     items.forEach(it => {
-      if (it.pisCode && it.pisCode.startsWith(`PIS-${yearPrefix}-`)) {
-        const parts = it.pisCode.split('-');
-        if (parts.length >= 3) {
-          const num = parseInt(parts[2], 10);
-          if (!isNaN(num) && num > maxSeq) {
-            maxSeq = num;
+      const allCodes = [it.pisCode, ...(it.pisCodes || [])].filter(Boolean) as string[];
+      allCodes.forEach(code => {
+        if (code.startsWith(`PIS-${yearPrefix}-`)) {
+          const parts = code.split('-');
+          if (parts.length >= 3) {
+            const num = parseInt(parts[2], 10);
+            if (!isNaN(num) && num > maxSeq) {
+              maxSeq = num;
+            }
           }
         }
-      }
+      });
     });
   }
 
@@ -621,11 +674,27 @@ export const generateNextPISCode = (items: PropertyItem[] = [], yearPrefix = '26
 };
 
 /**
- * Find Property by its unique PIS Sticker Code
+ * Generate Multiple Unique Sequential Property Inventory Sticker (PIS) Codes
+ */
+export const generateNextPISCodes = (items: PropertyItem[] = [], count = 1, yearPrefix = '26'): string[] => {
+  const highest = getHighestPISSequence(items, yearPrefix);
+  const codes: string[] = [];
+  for (let i = 1; i <= count; i++) {
+    const nextNum = (highest + i).toString().padStart(5, '0');
+    codes.push(`PIS-${yearPrefix}-${nextNum}`);
+  }
+  return codes;
+};
+
+/**
+ * Find Property by its unique PIS Sticker Code (searches primary pisCode and unit pisCodes)
  */
 export const getPropertyByPIS = (items: PropertyItem[], pisCode: string): PropertyItem | undefined => {
   const clean = pisCode.trim().toUpperCase();
-  return items.find(i => (i.pisCode && i.pisCode.trim().toUpperCase() === clean));
+  return items.find(i => 
+    (i.pisCode && i.pisCode.trim().toUpperCase() === clean) ||
+    (i.pisCodes && i.pisCodes.some(c => c && c.trim().toUpperCase() === clean))
+  );
 };
 
 /**
