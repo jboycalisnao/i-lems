@@ -430,7 +430,11 @@ export const CableStickerGeneratorModal: React.FC<CableStickerGeneratorModalProp
   const totalPages = Math.ceil(previewStickers.length / stickersPerPage);
 
   const modalContent = (
-    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200"
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="bg-white rounded-md shadow-2xl max-w-5xl w-full overflow-hidden border border-gray-200 flex flex-col max-h-[92vh]">
         {/* Header - Solid Yellow Header (No gradients) */}
         <div className="px-6 py-4 bg-yellow-500 text-gray-950 flex justify-between items-center flex-shrink-0 border-b border-yellow-600">
@@ -552,8 +556,7 @@ export const CableStickerGeneratorModal: React.FC<CableStickerGeneratorModalProp
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block font-bold text-gray-700">Starting Sequence Number</label>
-                  <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded-sm border border-emerald-300 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded-sm border border-emerald-300">
                     Auto-Generated
                   </span>
                 </div>
@@ -698,7 +701,7 @@ export const CableStickerGeneratorModal: React.FC<CableStickerGeneratorModalProp
 
                     <div className="relative flex items-center justify-center p-6 bg-slate-900/5 rounded-md border border-gray-200">
                       {/* Simulated Wire */}
-                      <div className="absolute top-0 bottom-0 w-6 bg-gradient-to-r from-gray-700 via-gray-900 to-gray-700 rounded-full shadow-inner z-0"></div>
+                      <div className="absolute top-0 bottom-0 w-6 bg-gray-800 rounded-full shadow-inner z-0"></div>
 
                       {/* Folded Tag */}
                       <div className="relative z-10 flex items-center pl-4">

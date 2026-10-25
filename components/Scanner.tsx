@@ -476,17 +476,13 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
                 {scanMethod === 'manual' ? (
                     <div className="w-full max-w-lg space-y-4">
                         {/* USB Barcode Dongle Connection Widget */}
-                        <div className="w-full bg-gradient-to-r from-blue-50/90 to-indigo-50/90 border border-blue-200 rounded-xl p-3 flex items-center justify-between shadow-2xs">
+                        <div className="w-full bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center justify-between shadow-2xs">
                             <div className="flex items-center gap-3">
                                 <div className="w-9 h-9 rounded-lg bg-white border border-blue-200 flex items-center justify-center text-blue-700 shadow-2xs">
                                     <Usb className="w-5 h-5" />
                                 </div>
                                 <div className="text-left">
                                     <div className="flex items-center gap-2">
-                                        <span className="relative flex h-2 w-2">
-                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                                        </span>
                                         <p className="text-xs font-bold text-gray-900">
                                             {usbScannerStatus.mode === 'webhid' ? 'USB Scanner Paired' : 'USB 2.4G Dongle Ready'}
                                         </p>
@@ -540,7 +536,7 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
             {foundPropertyItem && (
                  <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <div className={`${CardGlass} overflow-hidden border border-amber-300`}>
-                        <div className="bg-gradient-to-r from-amber-500/10 via-amber-600/10 to-amber-700/10 p-6 border-b border-amber-200 flex justify-between items-start">
+                        <div className="bg-amber-50 p-6 border-b border-amber-200 flex justify-between items-start">
                             <div>
                                 <div className="flex flex-wrap items-center gap-2 mb-2">
                                     {foundPropertyItem.pisCode && (

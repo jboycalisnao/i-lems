@@ -154,7 +154,11 @@ const InventoryForm: React.FC<InventoryFormProps> = ({ initialData, categories, 
   };
 
   const modalContent = (
-    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200"
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="bg-white/95 backdrop-blur-2xl rounded-md shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden border border-gray-200 flex flex-col">
         <div className="px-6 py-5 border-b border-gray-200 flex justify-between items-center bg-gray-50/80 flex-shrink-0">
           <h2 className="text-xl font-bold text-gray-800">
@@ -434,7 +438,7 @@ const InventoryForm: React.FC<InventoryFormProps> = ({ initialData, categories, 
             </div>
 
             {/* DDownload Laboratory Documents Section */}
-            <div className="border border-blue-200 bg-gradient-to-br from-blue-50/40 via-white to-indigo-50/30 rounded-xl p-4 sm:p-5 space-y-4">
+            <div className="border border-blue-200 bg-blue-50/40 rounded-xl p-4 sm:p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="text-sm font-bold text-gray-900 flex items-center gap-2">

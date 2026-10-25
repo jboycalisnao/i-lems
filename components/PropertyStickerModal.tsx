@@ -16,14 +16,20 @@ interface PropertyStickerModalProps {
 export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item, onClose, onOpenBatchSheet, onOpenCableTag }) => {
   const barcodeRef = useRef<SVGSVGElement>(null);
   
+  // Extract all assigned Property Numbers and PIS codes for this asset record
+  const allPropNumbers: string[] = (item.propertyNumbers && item.propertyNumbers.length > 0)
+    ? item.propertyNumbers
+    : [item.propertyNumber];
+
   // Extract all assigned PIS codes for this asset record
   const allPisCodes: string[] = (item.pisCodes && item.pisCodes.length > 0)
     ? item.pisCodes
     : [item.pisCode || `PIS-26-${item.propertyNumber.replace(/[^0-9]/g, '').slice(-5).padStart(5, '0')}`];
 
-  const hasMultipleUnits = allPisCodes.length > 1;
+  const hasMultipleUnits = allPisCodes.length > 1 || allPropNumbers.length > 1;
   const [selectedUnitIdx, setSelectedUnitIdx] = useState<number>(0);
   const activePisCode = allPisCodes[selectedUnitIdx] || allPisCodes[0];
+  const activePropCode = allPropNumbers[selectedUnitIdx] || allPropNumbers[0] || item.propertyNumber;
 
   const [copies, setCopies] = useState<number>(hasMultipleUnits ? allPisCodes.length : (item.quantity > 1 ? Math.min(item.quantity, 12) : 1));
   const [copied, setCopied] = useState(false);
@@ -95,7 +101,8 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
     `;
 
     const stickersHtml = Array.from({ length: copies }).map((_, idx) => {
-      // For multi-unit items, assign each unit's distinct PIS sticker code and QR
+      // For multi-unit items, assign each unit's distinct Property Code, PIS sticker code, and QR
+      const stickerPropCode = allPropNumbers[idx] || allPropNumbers[idx % allPropNumbers.length] || item.propertyNumber;
       const stickerPisCode = allPisCodes[idx] || allPisCodes[idx % allPisCodes.length] || activePisCode;
       const stickerQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`${deployedOrigin}/?view_pis=${stickerPisCode}`)}`;
       const stickerBarcodeSvg = generateBarcodeSvg(stickerPisCode);
@@ -123,7 +130,7 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
           <div class="sticker-mid">
             <div class="prop-code-row">
               <span class="prop-code-lbl">Property Code:</span>
-              <span class="prop-code-val">${item.propertyNumber}</span>
+              <span class="prop-code-val">${stickerPropCode}</span>
             </div>
           </div>
 
@@ -352,7 +359,11 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
   };
 
   const modalContent = (
-    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200"
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="bg-white rounded-md shadow-2xl max-w-lg w-full overflow-hidden border border-gray-200 flex flex-col max-h-[90vh]">
         {/* Modal Header */}
         <div className="px-6 py-4 bg-yellow-500 text-gray-950 flex justify-between items-center flex-shrink-0 border-b border-yellow-600">
@@ -396,14 +407,16 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
                     key={code}
                     type="button"
                     onClick={() => setSelectedUnitIdx(idx)}
-                    className={`px-2.5 py-1 text-xs font-mono font-bold rounded-sm border transition-colors whitespace-nowrap flex items-center gap-1 ${
+                    className={`px-2.5 py-1 text-xs font-mono font-bold rounded-sm border transition-colors whitespace-nowrap flex items-center gap-1.5 ${
                       selectedUnitIdx === idx
                         ? 'bg-blue-600 text-white border-blue-700 shadow-xs'
                         : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
                     }`}
                   >
                     <span>#{idx + 1}:</span>
-                    <span>{code}</span>
+                    <span>{allPropNumbers[idx] || item.propertyNumber}</span>
+                    <span className={selectedUnitIdx === idx ? 'text-blue-200' : 'text-gray-300'}>•</span>
+                    <span className={selectedUnitIdx === idx ? 'text-yellow-300' : 'text-amber-800'}>{code}</span>
                   </button>
                 ))}
               </div>
@@ -446,7 +459,7 @@ export const PropertyStickerModal: React.FC<PropertyStickerModalProps> = ({ item
               <div className="px-4 py-2.5 border-b-2 border-black bg-transparent">
                 <div className="text-xs font-black">Property Code:</div>
                 <div className="text-sm font-mono font-black border-b-2 border-black min-h-[22px] flex items-center pt-0.5 text-black">
-                  {item.propertyNumber}
+                  {activePropCode}
                 </div>
               </div>
 

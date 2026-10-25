@@ -298,7 +298,11 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
 
         {/* View Details Modal */}
         {selectedRequest && typeof document !== 'undefined' && createPortal(
-            <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
+            <div
+                className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200"
+                role="dialog"
+                aria-modal="true"
+            >
                 <div className="bg-white rounded-md shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in duration-200">
                     <div className="p-4 bg-gray-50 border-b border-gray-200 flex justify-between items-center flex-shrink-0">
                         <div className="flex items-center gap-3">

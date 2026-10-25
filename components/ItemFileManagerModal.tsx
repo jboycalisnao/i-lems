@@ -170,11 +170,15 @@ export const ItemFileManagerModal: React.FC<ItemFileManagerModalProps> = ({
   };
 
   const modalContent = (
-    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200"
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden border border-gray-200 flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200">
         
-        {/* Header */}
-        <div className="px-6 py-5 bg-gradient-to-r from-blue-700 via-indigo-700 to-cyan-600 text-white flex justify-between items-start flex-shrink-0">
+        {/* Header - Solid Blue, No Gradient */}
+        <div className="px-6 py-5 bg-blue-900 text-white flex justify-between items-start flex-shrink-0">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <span className="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-white/20 text-white backdrop-blur-sm border border-white/20 flex items-center gap-1">
@@ -335,7 +339,7 @@ export const ItemFileManagerModal: React.FC<ItemFileManagerModalProps> = ({
           </div>
 
           {/* Upload New File Section */}
-          <div className="border border-gray-200 rounded-xl p-5 bg-gradient-to-br from-slate-50 to-blue-50/30 space-y-4">
+          <div className="border border-gray-200 rounded-xl p-5 bg-gray-50 space-y-4">
             <div className="flex items-center justify-between">
               <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2">
                 <Upload className="w-4 h-4 text-blue-600" />

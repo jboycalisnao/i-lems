@@ -686,7 +686,7 @@ const InventoryList: React.FC<InventoryListProps> = ({
   return (
     <div className="bg-white rounded-md shadow-xl border border-gray-200 flex flex-col h-[calc(100dvh-250px)] min-h-[420px] md:h-[calc(100vh-200px)] md:min-h-0">
       {/* Informative Banner */}
-      <div className="bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 border-b border-blue-200/60 px-4 py-2.5 flex items-center gap-2.5 text-xs">
+      <div className="bg-blue-50 border-b border-blue-200/60 px-4 py-2.5 flex items-center gap-2.5 text-xs">
         <Microscope className="w-4 h-4 text-blue-700 flex-shrink-0" />
         <div className="text-blue-950 min-w-0">
           <span className="font-bold">Laboratory Inventory (Non-PIS):</span> Equipment and supplies that do <em>not</em> carry physical property stickers — primarily glasswares, plastic containers, and consumables (gloves, filter paper, batteries, blades).
@@ -833,11 +833,11 @@ const InventoryList: React.FC<InventoryListProps> = ({
                                             <table className="w-full text-left border-collapse">
                                                 <thead className="bg-gray-50/80 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                                                     <tr>
-                                                        <th className="px-6 py-3 w-1/4">Item Name</th>
-                                                        <th className="px-6 py-3 w-1/6">Stock</th>
-                                                        <th className="px-6 py-3 w-1/5">Location</th>
-                                                        <th className="px-6 py-3 w-1/6">Condition</th>
-                                                        <th className="px-6 py-3 text-right">Actions</th>
+                                                        <th className="px-4 py-2.5">Item Name</th>
+                                                        <th className="px-4 py-2.5 w-28 whitespace-nowrap">Stock</th>
+                                                        <th className="px-4 py-2.5 w-36 whitespace-nowrap">Location</th>
+                                                        <th className="px-4 py-2.5 w-32 whitespace-nowrap">Condition</th>
+                                                        <th className="px-4 py-2.5 text-right w-44 whitespace-nowrap">Actions</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-gray-100">
@@ -850,7 +850,7 @@ const InventoryList: React.FC<InventoryListProps> = ({
 
                                                         return (
                                                             <tr key={item.id} className="hover:bg-blue-50/30 transition-colors group">
-                                                                <td className="px-6 py-3">
+                                                                <td className="px-4 py-2.5">
                                                                     <div className="flex items-center gap-2">
                                                                         <div className="font-medium text-gray-900">{item.name}</div>
                                                                         {item.isConsumable && (
@@ -860,7 +860,7 @@ const InventoryList: React.FC<InventoryListProps> = ({
                                                                         )}
                                                                     </div>
                                                                     {item.shortId && <div className="text-[10px] text-gray-400 font-mono mt-0.5">{item.shortId}</div>}
-                                                                    {sanitizedDescription && <div className="text-xs text-gray-500 truncate max-w-[180px]">{sanitizedDescription}</div>}
+                                                                    {sanitizedDescription && <div className="text-xs text-gray-500 truncate max-w-[240px]">{sanitizedDescription}</div>}
                                                                     {item.attachments && item.attachments.length > 0 && (
                                                                         <button
                                                                             type="button"
@@ -876,7 +876,7 @@ const InventoryList: React.FC<InventoryListProps> = ({
                                                                         </button>
                                                                     )}
                                                                 </td>
-                                                                <td className="px-6 py-3">
+                                                                <td className="px-4 py-2.5 whitespace-nowrap">
                                                                     <div className="flex flex-col">
                                                                         <span className={`text-sm font-medium ${available === 0 ? 'text-red-600' : 'text-gray-700'}`}>
                                                                             {available} / {item.quantity}
@@ -889,13 +889,13 @@ const InventoryList: React.FC<InventoryListProps> = ({
                                                                         </div>
                                                                     </div>
                                                                 </td>
-                                                                <td className="px-6 py-3 text-sm text-gray-600">
+                                                                <td className="px-4 py-2.5 text-sm text-gray-600 whitespace-nowrap">
                                                                     {item.location}
                                                                 </td>
-                                                                <td className="px-6 py-3">
+                                                                <td className="px-4 py-2.5 whitespace-nowrap">
                                                                     {getConditionBadge(item.condition)}
                                                                 </td>
-                                                                <td className="px-6 py-3 text-right">
+                                                                <td className="px-4 py-2.5 text-right whitespace-nowrap">
                                                                     <div className="flex justify-end space-x-1 opacity-60 group-hover:opacity-100 transition-opacity">
                                                                         {item.isConsumable && onConsume && (
                                                                             <button
@@ -1109,7 +1109,7 @@ const InventoryList: React.FC<InventoryListProps> = ({
           >
             <div className="bg-white rounded-lg shadow-2xl border border-gray-300 w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
               {/* Modal Header */}
-              <div className="px-5 py-4 bg-gradient-to-r from-blue-900 to-indigo-900 text-white flex items-center justify-between flex-shrink-0">
+              <div className="px-5 py-4 bg-blue-900 text-white flex items-center justify-between flex-shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-white/10 rounded-md border border-white/20">
                     <Printer className="w-5 h-5 text-blue-200" />

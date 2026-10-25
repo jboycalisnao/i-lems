@@ -50,10 +50,10 @@ export const ScannedRecordModal: React.FC<ScannedRecordModalProps> = ({
         {/* Header */}
         <div className={`px-5 py-4 text-white flex items-center justify-between flex-shrink-0 ${
           matchType === 'property_item' 
-            ? 'bg-gradient-to-r from-amber-700 via-amber-800 to-amber-900' 
+            ? 'bg-amber-800' 
             : matchType === 'lab_item'
-              ? 'bg-gradient-to-r from-blue-900 via-indigo-900 to-blue-900'
-              : 'bg-gradient-to-r from-gray-800 to-gray-900'
+              ? 'bg-blue-900'
+              : 'bg-gray-800'
         }`}>
           <div className="flex items-center gap-3">
             <div className="p-2 bg-white/10 rounded-md border border-white/20">
@@ -138,7 +138,7 @@ export const ScannedRecordModal: React.FC<ScannedRecordModalProps> = ({
                 </div>
 
                 {/* Storage Location & Cabinet (Bold Highlight Card) */}
-                <div className="p-4 bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 border-2 border-blue-200 rounded-md shadow-xs">
+                <div className="p-4 bg-blue-50 border-2 border-blue-200 rounded-md shadow-xs">
                   <div className="flex items-center gap-3">
                     <div className="p-2.5 bg-blue-600 text-white rounded-md flex-shrink-0 shadow-xs">
                       <MapPin className="w-5 h-5" />
@@ -293,7 +293,7 @@ export const ScannedRecordModal: React.FC<ScannedRecordModalProps> = ({
                 </div>
 
                 {/* Storage Location & Cabinet (Bold Highlight Card) */}
-                <div className="p-4 bg-gradient-to-r from-amber-50 via-yellow-50 to-amber-50 border-2 border-amber-200 rounded-md shadow-xs">
+                <div className="p-4 bg-amber-50 border-2 border-amber-200 rounded-md shadow-xs">
                   <div className="flex items-center gap-3">
                     <div className="p-2.5 bg-amber-700 text-white rounded-md flex-shrink-0 shadow-xs">
                       <MapPin className="w-5 h-5" />

@@ -404,7 +404,7 @@ const App: React.FC = () => {
       );
   }
 
-  if (location.pathname === '/' || location.pathname === '/request-status') {
+  if (location.pathname === '/' || location.pathname === '/request-status' || location.pathname === '/kiosk') {
       return <Login appName={settings?.appName || SYSTEM_NAME} logoUrl={settings?.logoUrl} settings={settings || undefined} onLogin={handleLogin} expectedUsername={settings?.adminUsername} expectedPassword={settings?.adminPassword} />;
   }
 
@@ -475,12 +475,9 @@ const App: React.FC = () => {
                      aria-label="USB Barcode Scanner Dongle"
                      title={usbScannerStatus.mode === 'webhid' ? `USB Dongle Paired: ${usbScannerStatus.deviceName}` : 'USB Barcode Scanner Ready'}
                      onClick={() => setIsUsbModalOpen(true)}
-                     className="p-2 rounded-md text-gray-600 hover:bg-gray-100 relative"
+                     className="p-2 rounded-md text-gray-600 hover:bg-gray-100"
                  >
-                     <Usb className={`w-5 h-5 ${usbScannerStatus.mode === 'webhid' ? 'text-blue-600' : 'text-emerald-600'}`} />
-                     <span className="absolute top-1.5 right-1.5 flex h-2 w-2">
-                         <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                     </span>
+                     <Usb className={`w-5 h-5 ${usbScannerStatus.mode === 'webhid' ? 'text-blue-600' : 'text-gray-700'}`} />
                  </button>
                  <button aria-label="Refresh records" title="Refresh records" onClick={() => refreshData(true).catch(() => {})} className={`p-2 rounded-md text-gray-500 hover:bg-gray-100 ${isLoading ? 'animate-spin' : ''}`}><RefreshCw className="w-5 h-5"/></button>
                  <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg p-1 pr-1.5">
@@ -497,8 +494,8 @@ const App: React.FC = () => {
         </header>
 
         <div className="flex-1 overflow-y-auto pb-20 md:pb-0">
-            <div className="bg-white border-b border-gray-200 px-4 py-3 md:px-8 md:py-4 mb-4 md:mb-6 sticky top-0 z-10 shadow-sm">
-                <div className="max-w-7xl mx-auto flex justify-between items-center gap-4">
+            <div className="bg-white border-b border-gray-200 px-3 sm:px-4 md:px-6 py-3 mb-4 md:mb-6 sticky top-0 z-10 shadow-sm">
+                <div className="w-full max-w-[1920px] mx-auto flex justify-between items-center gap-4">
                     <div>
                         <h2 className="text-xl md:text-2xl font-bold text-gray-900 uppercase">
                           {view === 'property' ? 'Property Inventory' : view === 'inventory' ? 'Laboratory Inventory' : view}
@@ -528,13 +525,7 @@ const App: React.FC = () => {
                             className="flex items-center gap-2 px-3 py-2 text-xs font-bold rounded-lg border transition-all bg-white hover:bg-gray-50 border-gray-200 text-gray-700 shadow-xs"
                             title={usbScannerStatus.mode === 'webhid' ? `USB Dongle Paired: ${usbScannerStatus.deviceName}` : 'USB 2.4G Barcode Dongle Active (Click to Pair / Test)'}
                         >
-                            <div className="relative flex items-center">
-                                <Usb className={`w-4 h-4 ${usbScannerStatus.mode === 'webhid' ? 'text-blue-600' : 'text-emerald-600'}`} />
-                                <span className="absolute -top-1 -right-1 flex h-2 w-2">
-                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                                </span>
-                            </div>
+                            <Usb className={`w-4 h-4 ${usbScannerStatus.mode === 'webhid' ? 'text-blue-600' : 'text-gray-700'}`} />
                             <span className="hidden md:inline font-semibold">
                                 {usbScannerStatus.mode === 'webhid' ? 'USB Paired' : 'USB Dongle'}
                             </span>
@@ -572,8 +563,8 @@ const App: React.FC = () => {
                 </div>
             </div>
 
-            <div className="px-4 md:px-8 pb-8">
-                <div className="max-w-7xl mx-auto">
+            <div className="px-3 sm:px-4 md:px-6 pb-8">
+                <div className="w-full max-w-[1920px] mx-auto">
                     <Routes>
                         <Route path="/dashboard" element={<Dashboard items={items} borrowRecords={borrowRecords} />} />
                         <Route path="/inventory/*" element={<InventoryList items={items} categories={categories} onEdit={(item) => { setEditingItem(item); setIsFormOpen(true); }} onDelete={handleDelete} onShowQR={setQrItem} onPrintBarcodes={setBarcodeItem} onRefresh={() => refreshData(false, true)} />} />

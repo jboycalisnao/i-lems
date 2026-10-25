@@ -74,9 +74,19 @@ export const lookupScannedBarcode = async (
     return false;
   });
 
-  // Look for exact Property Number match (e.g. "PROP-2026-001" or "LNHS-DCP-2024-001")
+  // Look for exact Property Number match in primary or multi-unit propertyNumbers (e.g. "LNHS-SE-SCI-2026-001")
   if (!matchedProperty) {
-    matchedProperty = propertyItems.find(p => (p.propertyNumber || '').trim().toUpperCase() === upperCode);
+    matchedProperty = propertyItems.find(p => {
+      if ((p.propertyNumber || '').trim().toUpperCase() === upperCode) {
+        matchedUnitPIS = upperCode;
+        return true;
+      }
+      if (p.propertyNumbers && p.propertyNumbers.some(pn => pn && pn.trim().toUpperCase() === upperCode)) {
+        matchedUnitPIS = upperCode;
+        return true;
+      }
+      return false;
+    });
   }
 
   // Look for Serial Number match

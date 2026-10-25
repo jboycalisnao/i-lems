@@ -356,13 +356,13 @@ const applyActiveLoanQuantities = (items: InventoryItem[], records: BorrowRecord
 export const getInventorySnapshot = async (forceRefresh = false): Promise<{ items: InventoryItem[]; borrowRecords: BorrowRecord[] }> => {
     const now = Date.now();
 
-    // 1. Return in-memory cache immediately if fresh and not forcing refresh (0ms delay)
-    if (!forceRefresh && memoryInventorySnapshot && (now - lastInventoryFetchTime < INVENTORY_CACHE_TTL)) {
+    // 1. Return in-memory cache immediately if available and not forcing refresh (0ms delay)
+    if (!forceRefresh && memoryInventorySnapshot && memoryInventorySnapshot.items.length > 0) {
         return memoryInventorySnapshot;
     }
 
     // 2. Return local storage cache if available and not forcing refresh
-    if (!forceRefresh && !memoryInventorySnapshot) {
+    if (!forceRefresh) {
         const localItems = loadLocalInventoryItems();
         if (localItems.length > 0) {
             const localRecords = loadLocalBorrowRecords();
@@ -462,6 +462,12 @@ export const getInventorySnapshot = async (forceRefresh = false): Promise<{ item
 };
 
 export const getInventory = async (forceRefresh = false): Promise<InventoryItem[]> => {
+    if (!forceRefresh) {
+        const cached = getCachedItems();
+        if (cached && cached.length > 0) {
+            return cached;
+        }
+    }
     const snapshot = await getInventorySnapshot(forceRefresh);
     return snapshot.items;
 };

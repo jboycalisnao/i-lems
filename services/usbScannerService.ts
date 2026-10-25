@@ -1,9 +1,10 @@
 /**
- * USB Barcode Scanner Service for I-LEMS
+ * USB Barcode & RFID Scanner Service for I-LEMS
  * 
  * Supports:
  * 1. WebHID Direct USB Pairing (navigator.hid):
- *    Direct browser connection to 2.4G wireless USB dongles & wired handheld USB scanners.
+ *    Direct browser connection to 2.4G wireless USB dongles, wired handheld USB scanners,
+ *    and USB RFID card readers with real-time hardware connect/disconnect detection.
  * 2. Hardware Keyboard Wedge Detection:
  *    Auto-detects high-speed barcode transmissions (< 50ms/char) from standard 2.4G USB dongles.
  * 3. Audio Feedback:
@@ -17,14 +18,38 @@ export interface USBDeviceSummary {
   opened: boolean;
 }
 
+export interface DeviceHardwareStatus {
+  isConnected: boolean;
+  deviceName: string | null;
+  source: 'webhid' | 'wedge' | null;
+}
+
+export interface ScannerHardwareStatus {
+  isConnected: boolean;
+  deviceName: string;
+  mode: 'webhid' | 'wedge' | 'idle';
+  rfid: DeviceHardwareStatus;
+  barcode: DeviceHardwareStatus;
+}
+
 export type ScanHandler = (barcode: string, source: 'webhid' | 'keyboard_wedge') => void;
-export type StatusHandler = (status: { isConnected: boolean; deviceName: string; mode: 'webhid' | 'wedge' | 'idle' }) => void;
+export type StatusHandler = (status: ScannerHardwareStatus) => void;
 
 class USBScannerService {
   private scanListeners: Set<ScanHandler> = new Set();
   private statusListeners: Set<StatusHandler> = new Set();
   
-  private activeHIDDevice: any = null;
+  // Specific physical devices
+  private activeRfidDevice: any = null;
+  private activeBarcodeDevice: any = null;
+  private activeHIDDevice: any = null; // compatibility pointer
+
+  // Wedge verification flags (set when actual scan is received)
+  private rfidWedgeVerified: boolean = false;
+  private rfidWedgeName: string | null = null;
+  private barcodeWedgeVerified: boolean = false;
+  private barcodeWedgeName: string | null = null;
+
   private isListeningWedge: boolean = false;
   
   // Keystroke wedge detection buffer
@@ -40,6 +65,7 @@ class USBScannerService {
   constructor() {
     this.loadPreferences();
     this.initKeyboardWedgeListener();
+    this.initHidListeners();
     this.checkPreviouslyPairedHID();
   }
 
@@ -83,65 +109,152 @@ class USBScannerService {
     return typeof navigator !== 'undefined' && 'hid' in navigator && typeof (navigator as any).hid?.requestDevice === 'function';
   }
 
-  /**
-   * Prompts the browser's native USB HID device selection dialog
-   * Allows pairing wireless 2.4G scanner dongles and USB wired barcode scanners.
-   */
-  public async requestUSBScanner(): Promise<{ success: boolean; deviceName?: string; error?: string }> {
-    if (!this.isWebHIDSupported()) {
-      return { 
-        success: false, 
-        error: 'WebHID is not supported by your current browser. Google Chrome or Microsoft Edge is recommended for direct USB pairing.' 
-      };
-    }
-
+  private initHidListeners() {
+    if (typeof navigator === 'undefined' || !('hid' in navigator)) return;
     try {
       const hid = (navigator as any).hid;
-      // Request device without vendor filters so any 2.4G dongle or scanner can be picked
-      const devices = await hid.requestDevice({ filters: [] });
-      
-      if (!devices || devices.length === 0) {
-        return { success: false, error: 'No USB device was selected.' };
-      }
-
-      const device = devices[0];
-      await this.connectHIDDevice(device);
-
-      return { 
-        success: true, 
-        deviceName: device.productName || `USB Barcode Device (${device.vendorId.toString(16)}:${device.productId.toString(16)})` 
-      };
-    } catch (err: any) {
-      console.warn('WebHID pairing error:', err);
-      return { success: false, error: err.message || 'Failed to connect USB device.' };
+      hid.addEventListener('connect', async (event: any) => {
+        await this.handleDeviceConnect(event.device);
+      });
+      hid.addEventListener('disconnect', (event: any) => {
+        this.handleDeviceDisconnect(event.device);
+      });
+    } catch (e) {
+      console.warn('[USB Scanner] Could not attach native HID connect/disconnect listeners:', e);
     }
+  }
+
+  private isRfidDevice(device: any): boolean {
+    const saved = localStorage.getItem('scilab_rfid_device');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.vendorId === device.vendorId && parsed.productId === device.productId) {
+          return true;
+        }
+      } catch (e) {}
+    }
+    const name = String(device.productName || '').toLowerCase();
+    return /rfid|nfc|card|mifare|ic\s*reader|proximity/i.test(name);
+  }
+
+  private isBarcodeDevice(device: any): boolean {
+    const saved = localStorage.getItem('scilab_barcode_device');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.vendorId === device.vendorId && parsed.productId === device.productId) {
+          return true;
+        }
+      } catch (e) {}
+    }
+    const name = String(device.productName || '').toLowerCase();
+    return /barcode|scanner|pos|zebra|honeywell|netum|datalogic|tera|eyoyo|symcode/i.test(name);
   }
 
   /**
    * Connect and attach input report listener to a WebHID device
    */
-  private async connectHIDDevice(device: any) {
+  private async connectHIDDevice(device: any, explicitRole?: 'rfid' | 'barcode') {
     try {
       if (!device.opened) {
         await device.open();
       }
 
-      this.activeHIDDevice = device;
-
       device.addEventListener('inputreport', (event: any) => {
         this.handleHIDInputReport(event);
       });
 
-      device.addEventListener('disconnect', () => {
-        this.activeHIDDevice = null;
-        this.emitStatus();
-      });
+      if (explicitRole === 'rfid' || (!explicitRole && this.isRfidDevice(device))) {
+        this.activeRfidDevice = device;
+        try {
+          localStorage.setItem('scilab_rfid_device', JSON.stringify({ vendorId: device.vendorId, productId: device.productId }));
+        } catch (e) {}
+      } else {
+        this.activeBarcodeDevice = device;
+        try {
+          localStorage.setItem('scilab_barcode_device', JSON.stringify({ vendorId: device.vendorId, productId: device.productId }));
+        } catch (e) {}
+      }
 
+      this.activeHIDDevice = this.activeBarcodeDevice || this.activeRfidDevice;
       this.emitStatus();
     } catch (e) {
       console.error('Error opening WebHID device:', e);
       throw e;
     }
+  }
+
+  private async handleDeviceConnect(device: any) {
+    try {
+      await this.connectHIDDevice(device);
+    } catch (e) {
+      console.warn('[USB Scanner] Error auto-connecting newly inserted HID device:', e);
+    }
+  }
+
+  private handleDeviceDisconnect(device: any) {
+    if (this.activeRfidDevice && (this.activeRfidDevice === device || (this.activeRfidDevice.vendorId === device.vendorId && this.activeRfidDevice.productId === device.productId))) {
+      this.activeRfidDevice = null;
+      this.rfidWedgeVerified = false;
+    }
+    if (this.activeBarcodeDevice && (this.activeBarcodeDevice === device || (this.activeBarcodeDevice.vendorId === device.vendorId && this.activeBarcodeDevice.productId === device.productId))) {
+      this.activeBarcodeDevice = null;
+      this.barcodeWedgeVerified = false;
+    }
+    this.activeHIDDevice = this.activeBarcodeDevice || this.activeRfidDevice;
+    this.emitStatus();
+  }
+
+  /**
+   * Prompts user to pair an RFID Reader specifically
+   */
+  public async requestRfidScanner(): Promise<{ success: boolean; deviceName?: string; error?: string }> {
+    if (!this.isWebHIDSupported()) {
+      return { success: false, error: 'WebHID is not supported by your current browser.' };
+    }
+    try {
+      const hid = (navigator as any).hid;
+      const devices = await hid.requestDevice({ filters: [] });
+      if (!devices || devices.length === 0) {
+        return { success: false, error: 'No USB device was selected.' };
+      }
+      const device = devices[0];
+      await this.connectHIDDevice(device, 'rfid');
+      const name = device.productName || `USB RFID Reader (${device.vendorId.toString(16)}:${device.productId.toString(16)})`;
+      return { success: true, deviceName: name };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to connect RFID reader.' };
+    }
+  }
+
+  /**
+   * Prompts user to pair a Barcode Scanner specifically
+   */
+  public async requestBarcodeScanner(): Promise<{ success: boolean; deviceName?: string; error?: string }> {
+    if (!this.isWebHIDSupported()) {
+      return { success: false, error: 'WebHID is not supported by your current browser.' };
+    }
+    try {
+      const hid = (navigator as any).hid;
+      const devices = await hid.requestDevice({ filters: [] });
+      if (!devices || devices.length === 0) {
+        return { success: false, error: 'No USB device was selected.' };
+      }
+      const device = devices[0];
+      await this.connectHIDDevice(device, 'barcode');
+      const name = device.productName || `USB Barcode Scanner (${device.vendorId.toString(16)}:${device.productId.toString(16)})`;
+      return { success: true, deviceName: name };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to connect Barcode scanner.' };
+    }
+  }
+
+  /**
+   * General pairing method (backwards-compatible with USBScannerPairModal)
+   */
+  public async requestUSBScanner(): Promise<{ success: boolean; deviceName?: string; error?: string }> {
+    return this.requestBarcodeScanner();
   }
 
   /**
@@ -152,15 +265,12 @@ class USBScannerService {
     const { data } = event;
     if (!data || data.byteLength === 0) return;
 
-    // Many POS scanners send ASCII bytes or HID keyboard usage codes in the report
     let decodedChunk = '';
     for (let i = 0; i < data.byteLength; i++) {
       const byte = data.getUint8(i);
-      // printable ASCII range
       if (byte >= 32 && byte <= 126) {
         decodedChunk += String.fromCharCode(byte);
       } else if (byte === 13 || byte === 10) {
-        // Enter / Line feed indicates end of barcode
         if (this.hidBuffer.trim().length >= 2) {
           const scanned = this.hidBuffer.trim();
           this.hidBuffer = '';
@@ -172,7 +282,6 @@ class USBScannerService {
 
     if (decodedChunk) {
       this.hidBuffer += decodedChunk;
-      // Auto-clear buffer if no enter received within 1 second
       setTimeout(() => {
         if (this.hidBuffer.trim().length >= 3) {
           const scanned = this.hidBuffer.trim();
@@ -194,54 +303,85 @@ class USBScannerService {
       const hid = (navigator as any).hid;
       const devices = await hid.getDevices();
       if (devices && devices.length > 0) {
-        // Attempt to connect to the first remembered device
-        if (!this.activeHIDDevice) {
-          await this.connectHIDDevice(devices[0]);
+        for (const device of devices) {
+          if (this.isRfidDevice(device) && !this.activeRfidDevice) {
+            await this.connectHIDDevice(device, 'rfid').catch(() => {});
+          } else if (!this.activeBarcodeDevice) {
+            await this.connectHIDDevice(device, 'barcode').catch(() => {});
+          }
         }
         return devices.map((d: any) => ({
           vendorId: d.vendorId,
           productId: d.productId,
-          productName: d.productName || 'USB Barcode Scanner',
+          productName: d.productName || 'USB Scanner',
           opened: d.opened
         }));
       }
     } catch (e) {
-      // user or browser policy restricted
+      // restricted
     }
     return [];
   }
 
-  public async disconnectHID(): Promise<void> {
-    if (this.activeHIDDevice) {
+  public async disconnectRfid(): Promise<void> {
+    if (this.activeRfidDevice) {
       try {
-        await this.activeHIDDevice.close();
+        await this.activeRfidDevice.close();
       } catch (e) {}
-      this.activeHIDDevice = null;
-      this.emitStatus();
+      this.activeRfidDevice = null;
     }
+    this.rfidWedgeVerified = false;
+    this.activeHIDDevice = this.activeBarcodeDevice || null;
+    this.emitStatus();
+  }
+
+  public async disconnectBarcode(): Promise<void> {
+    if (this.activeBarcodeDevice) {
+      try {
+        await this.activeBarcodeDevice.close();
+      } catch (e) {}
+      this.activeBarcodeDevice = null;
+    }
+    this.barcodeWedgeVerified = false;
+    this.activeHIDDevice = this.activeRfidDevice || null;
+    this.emitStatus();
+  }
+
+  public async disconnectHID(): Promise<void> {
+    await this.disconnectBarcode();
+    await this.disconnectRfid();
   }
 
   public getConnectedDevice(): USBDeviceSummary | null {
-    if (!this.activeHIDDevice) return null;
+    const dev = this.activeBarcodeDevice || this.activeRfidDevice;
+    if (!dev) return null;
     return {
-      vendorId: this.activeHIDDevice.vendorId,
-      productId: this.activeHIDDevice.productId,
-      productName: this.activeHIDDevice.productName || 'USB Barcode Scanner Dongle',
-      opened: this.activeHIDDevice.opened
+      vendorId: dev.vendorId,
+      productId: dev.productId,
+      productName: dev.productName || 'USB Barcode Scanner Dongle',
+      opened: dev.opened
     };
   }
 
+  // --- Keyboard Wedge Verification ---
+  public markRfidDetected(deviceName?: string) {
+    this.rfidWedgeVerified = true;
+    if (deviceName) this.rfidWedgeName = deviceName;
+    this.emitStatus();
+  }
+
+  public markBarcodeDetected(deviceName?: string) {
+    this.barcodeWedgeVerified = true;
+    if (deviceName) this.barcodeWedgeName = deviceName;
+    this.emitStatus();
+  }
+
   // --- Hardware Keyboard Wedge Listener ---
-  /**
-   * Listens for 2.4G USB Dongle barcode transmissions.
-   * Scanners transmit keystrokes in bursts (under 50ms per character) ending with 'Enter'.
-   */
   private initKeyboardWedgeListener() {
     if (typeof window === 'undefined' || this.isListeningWedge) return;
     this.isListeningWedge = true;
 
     window.addEventListener('keydown', (e: KeyboardEvent) => {
-      // Ignore functional modifier keys
       if (e.ctrlKey || e.altKey || e.metaKey) return;
       if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(e.key)) return;
 
@@ -249,7 +389,6 @@ class USBScannerService {
 
       if (e.key === 'Enter') {
         if (this.keyBuffer.length >= 3) {
-          // Calculate average key interval
           let isBarcodeSpeed = true;
           if (this.keyTimestamps.length > 1) {
             const intervals: number[] = [];
@@ -257,13 +396,22 @@ class USBScannerService {
               intervals.push(this.keyTimestamps[i] - this.keyTimestamps[i - 1]);
             }
             const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-            // Barcode scanners transmit at 2ms to 45ms per character. Human typing is > 80ms.
             isBarcodeSpeed = avgInterval < 55;
           }
 
           if (isBarcodeSpeed) {
             const barcode = this.keyBuffer.join('');
             this.resetWedgeBuffer();
+
+            // Auto-detect RFID vs Barcode based on standard tag patterns
+            const isLikelyRfid = /^[A-Fa-f0-9]{8,14}$/.test(barcode) || /^\d{10,12}$/.test(barcode);
+            if (isLikelyRfid) {
+              this.rfidWedgeVerified = true;
+            } else {
+              this.barcodeWedgeVerified = true;
+            }
+            this.emitStatus();
+
             this.emitScan(barcode, 'keyboard_wedge');
             return;
           }
@@ -272,9 +420,7 @@ class USBScannerService {
         return;
       }
 
-      // Buffer character
       if (e.key.length === 1) {
-        // If gap between this and last key is > 200ms, start a new scan buffer
         const lastTime = this.keyTimestamps[this.keyTimestamps.length - 1] || 0;
         if (now - lastTime > 180) {
           this.keyBuffer = [];
@@ -284,7 +430,6 @@ class USBScannerService {
         this.keyBuffer.push(e.key);
         this.keyTimestamps.push(now);
 
-        // Auto-clear buffer if abandoned
         clearTimeout(this.wedgeTimer);
         this.wedgeTimer = setTimeout(() => {
           this.resetWedgeBuffer();
@@ -331,9 +476,7 @@ class USBScannerService {
       gain.connect(ctx.destination);
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.08);
-    } catch (e) {
-      // Audio playback might be restricted until user interaction
-    }
+    } catch (e) {}
   }
 
   public playErrorBeep() {
@@ -367,7 +510,6 @@ class USBScannerService {
 
   public onStatus(callback: StatusHandler): () => void {
     this.statusListeners.add(callback);
-    // Send immediate initial status
     callback(this.getStatus());
     return () => {
       this.statusListeners.delete(callback);
@@ -388,18 +530,28 @@ class USBScannerService {
     });
   }
 
-  public getStatus(): { isConnected: boolean; deviceName: string; mode: 'webhid' | 'wedge' | 'idle' } {
-    if (this.activeHIDDevice) {
-      return {
-        isConnected: true,
-        deviceName: this.activeHIDDevice.productName || 'USB Barcode Scanner Dongle',
-        mode: 'webhid'
-      };
-    }
+  public getStatus(): ScannerHardwareStatus {
+    const isRfidWebHid = !!this.activeRfidDevice;
+    const isBarcodeWebHid = !!this.activeBarcodeDevice;
+
+    const rfidConnected = isRfidWebHid || this.rfidWedgeVerified;
+    const barcodeConnected = isBarcodeWebHid || this.barcodeWedgeVerified;
+    const anyConnected = rfidConnected || barcodeConnected;
+
     return {
-      isConnected: true, // Keyboard wedge listener is always active and ready
-      deviceName: 'USB Hardware Wedge (Auto-detecting)',
-      mode: 'wedge'
+      isConnected: anyConnected,
+      deviceName: this.activeBarcodeDevice?.productName || this.activeRfidDevice?.productName || (anyConnected ? 'USB Scanner Active' : 'No Scanner Connected'),
+      mode: (isRfidWebHid || isBarcodeWebHid) ? 'webhid' : anyConnected ? 'wedge' : 'idle',
+      rfid: {
+        isConnected: rfidConnected,
+        deviceName: this.activeRfidDevice?.productName || (this.rfidWedgeVerified ? (this.rfidWedgeName || 'USB RFID Reader (Verified)') : null),
+        source: isRfidWebHid ? 'webhid' : this.rfidWedgeVerified ? 'wedge' : null,
+      },
+      barcode: {
+        isConnected: barcodeConnected,
+        deviceName: this.activeBarcodeDevice?.productName || (this.barcodeWedgeVerified ? (this.barcodeWedgeName || 'USB Barcode Scanner (Verified)') : null),
+        source: isBarcodeWebHid ? 'webhid' : this.barcodeWedgeVerified ? 'wedge' : null,
+      }
     };
   }
 

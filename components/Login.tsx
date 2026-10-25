@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { FlaskConical, Lock, User, AlertCircle, Eye, EyeOff, Mail, ArrowRight, ArrowLeft, KeyRound, Loader2, Send, ShoppingBag, Search, QrCode, MapPin, Activity, Box, Tag, Building2, ShieldCheck, Barcode, CheckCircle2 } from 'lucide-react';
+import { FlaskConical, Lock, User, AlertCircle, Eye, EyeOff, Mail, ArrowRight, ArrowLeft, KeyRound, Loader2, Send, ShoppingBag, Search, QrCode, MapPin, Activity, Box, Tag, Building2, ShieldCheck, Barcode, CheckCircle2, Radio, RefreshCw, Clock, Volume2, VolumeX, X } from 'lucide-react';
 import { AppSettings, BorrowRequest, InventoryItem, PropertyItem, AppUser } from '../types';
 import * as storage from '../services/storageService';
 import * as propertyStorage from '../services/propertyStorageService';
@@ -13,6 +13,10 @@ import { getCategoryColor, getCategoryIcon } from '../constants';
 import { SYSTEM_NAME, SYSTEM_SUBTITLE } from '../branding';
 import { LEON_NHS_SEAL_DATA_URI } from '../services/schoolSeal';
 import AppFooter from './AppFooter';
+import { useLearnerRoster, RegistrarLearner } from '../services/usisRoster';
+import usbScannerService from '../services/usbScannerService';
+import { lookupScannedBarcode } from '../services/scannerLookupService';
+import LearnerConfirmModal from './LearnerConfirmModal';
 
 interface LoginProps {
   appName: string;
@@ -46,9 +50,85 @@ const Login: React.FC<LoginProps> = ({
 }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const [viewMode, setViewMode] = useState<'landing' | 'admin' | 'reset' | 'item_view' | 'request_lookup' | 'property_view'>(
-      location.pathname === '/request-status' ? 'request_lookup' : 'landing'
+  const isKioskInit = location.pathname === '/kiosk' || new URLSearchParams(location.search).get('kiosk') === 'true';
+  const [viewMode, setViewMode] = useState<'landing' | 'admin' | 'reset' | 'item_view' | 'request_lookup' | 'property_view' | 'kiosk'>(
+      isKioskInit ? 'kiosk' : location.pathname === '/request-status' ? 'request_lookup' : 'landing'
   );
+
+  // USIS Satellite Offline Learner Roster Hook
+  const {
+    learners,
+    totalCount: rosterCount,
+    isHydrated: isRosterHydrated,
+    isSyncing: isRosterSyncing,
+    lastSyncedAt: rosterLastSyncedAt,
+    revalidate: syncRoster,
+    findLearner
+  } = useLearnerRoster();
+
+  const [kioskLearner, setKioskLearner] = useState<RegistrarLearner | null>(null);
+  const [kioskLearnerEmail, setKioskLearnerEmail] = useState('');
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [pendingConfirmLearner, setPendingConfirmLearner] = useState<RegistrarLearner | null>(null);
+  const [manualLrn, setManualLrn] = useState('');
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+  const [kioskToast, setKioskToast] = useState<{ message: string; submessage?: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [kioskSound, setKioskSound] = useState(() => usbScannerService.isSoundEnabled());
+  const [scannerStatus, setScannerStatus] = useState(() => usbScannerService.getStatus());
+
+  useEffect(() => {
+    const unsub = usbScannerService.onStatus((status) => {
+      setScannerStatus(status);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleConnectRfid = async () => {
+    const res = await usbScannerService.requestRfidScanner();
+    if (res.success) {
+      setKioskToast({
+        message: 'RFID Scanner Connected',
+        submessage: res.deviceName,
+        type: 'success'
+      });
+    } else if (res.error && res.error !== 'No USB device was selected.') {
+      setKioskToast({
+        message: 'Connection Failed',
+        submessage: res.error,
+        type: 'error'
+      });
+    }
+  };
+
+  const handleConnectBarcode = async () => {
+    const res = await usbScannerService.requestBarcodeScanner();
+    if (res.success) {
+      setKioskToast({
+        message: 'Barcode Scanner Connected',
+        submessage: res.deviceName,
+        type: 'success'
+      });
+    } else if (res.error && res.error !== 'No USB device was selected.') {
+      setKioskToast({
+        message: 'Connection Failed',
+        submessage: res.error,
+        type: 'error'
+      });
+    }
+  };
+
+  const handleLearnerConfirmed = (confirmedLearner: RegistrarLearner, email: string) => {
+    setShowConfirmModal(false);
+    setPendingConfirmLearner(null);
+    setKioskLearner(confirmedLearner);
+    setKioskLearnerEmail(email);
+    setShowRequestModal(true);
+  };
+
+  const handleLearnerCancel = () => {
+    setShowConfirmModal(false);
+    setPendingConfirmLearner(null);
+  };
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -101,16 +181,144 @@ const Login: React.FC<LoginProps> = ({
 
   useEffect(() => {
       const searchParams = new URLSearchParams(location.search);
-      if (location.pathname === '/request-status') {
+      if (location.pathname === '/kiosk' || searchParams.get('kiosk') === 'true') {
+          setViewMode('kiosk');
+      } else if (location.pathname === '/request-status') {
           setViewMode('request_lookup');
       } else if (searchParams.get('view_pis')) {
           setViewMode('property_view');
       } else if (searchParams.get('view_item')) {
           setViewMode('item_view');
-      } else {
+      } else if (location.pathname === '/' && viewMode !== 'kiosk') {
           setViewMode('landing');
       }
   }, [location.pathname, location.search]);
+
+  // Digital clock for kiosk screen
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Standby Scanner Listener when Kiosk is Active and Form is not open
+  useEffect(() => {
+    if (viewMode !== 'kiosk' || showRequestModal || showConfirmModal) return;
+
+    const unsub = usbScannerService.onScan(async (code) => {
+      const cleanCode = code.trim();
+      if (!cleanCode) return;
+
+      // 1. Look up student in roster cache
+      const learner = findLearner(cleanCode);
+      if (learner) {
+        usbScannerService.markRfidDetected();
+        usbScannerService.playSuccessBeep();
+        // Show confirmation box before going to borrowers view
+        setPendingConfirmLearner(learner);
+        setShowConfirmModal(true);
+        return;
+      }
+
+      // 2. Look up equipment barcode
+      try {
+        const lookup = await lookupScannedBarcode(cleanCode, [], []);
+        if (lookup.matchType === 'property_item' || lookup.matchType === 'lab_item') {
+          usbScannerService.markBarcodeDetected();
+          usbScannerService.playSuccessBeep();
+          setKioskLearner(null);
+          setKioskLearnerEmail('');
+          setShowRequestModal(true);
+          setKioskToast({
+            message: `Equipment Scanned: ${lookup.propertyItem?.name || lookup.labItem?.name}`,
+            submessage: 'Now tap student RFID ID card or enter LRN.',
+            type: 'info'
+          });
+          return;
+        }
+      } catch (err) {}
+
+      // 3. Fallback: Unregistered / Unindexed RFID Card or ID -> Directly open Public Request Modal for manual entry
+      usbScannerService.markRfidDetected();
+      usbScannerService.playSuccessBeep();
+      setPendingConfirmLearner(null);
+      setShowConfirmModal(false);
+      setKioskLearner({
+        id: cleanCode,
+        lrn: cleanCode,
+        first_name: '',
+        last_name: '',
+        middle_name: '',
+        gender: null,
+        birth_date: null,
+        status: 'Active',
+        section_id: null,
+        full_name: '',
+        name: '',
+        section_name: '',
+        grade_level: ''
+      });
+      setKioskLearnerEmail('');
+      setShowRequestModal(true);
+      setKioskToast({
+        message: `Card Scanned: "${cleanCode}"`,
+        submessage: 'No learner profile found in USIS roster. Please manually fill in your borrower information.',
+        type: 'info'
+      });
+    });
+
+    return () => {
+      unsub();
+    };
+  }, [viewMode, showRequestModal, showConfirmModal, findLearner]);
+
+  useEffect(() => {
+    if (kioskToast) {
+      const timer = setTimeout(() => setKioskToast(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [kioskToast]);
+
+  const handleManualLrnSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const query = manualLrn.trim();
+    if (!query) return;
+
+    const learner = findLearner(query);
+    if (learner) {
+      usbScannerService.playSuccessBeep();
+      setPendingConfirmLearner(learner);
+      setShowConfirmModal(true);
+      setManualLrn('');
+    } else {
+      // Unregistered LRN -> Directly open Public Request Modal for manual entry
+      usbScannerService.playSuccessBeep();
+      setPendingConfirmLearner(null);
+      setShowConfirmModal(false);
+      setKioskLearner({
+        id: query,
+        lrn: query,
+        first_name: '',
+        last_name: '',
+        middle_name: '',
+        gender: null,
+        birth_date: null,
+        status: 'Active',
+        section_id: null,
+        full_name: '',
+        name: '',
+        section_name: '',
+        grade_level: ''
+      });
+      setKioskLearnerEmail('');
+      setShowRequestModal(true);
+      setManualLrn('');
+      setKioskToast({
+        message: `LRN "${query}" not found in USIS`,
+        submessage: 'Please manually fill in your borrower information in the form.',
+        type: 'info'
+      });
+    }
+  };
 
   const loadPublicItem = async (id: string) => {
       setIsItemLoading(true);
@@ -293,41 +501,266 @@ const Login: React.FC<LoginProps> = ({
         {viewMode === 'landing' && (
             <div className="flex-1 flex flex-col animate-in fade-in zoom-in duration-300">
                 <div className="flex-1 p-8 md:p-12 flex flex-col justify-center items-center relative group">
-                    <div className="absolute inset-0 bg-gradient-to-br from-maroon-50 to-transparent opacity-50"></div>
                     <div className="relative z-10 text-center space-y-8 w-full max-w-2xl">
                         <div>
-                            <div className="bg-maroon-100/50 p-5 rounded-full inline-flex mb-4">
+                            <div className="bg-maroon-100 p-5 rounded-full inline-flex mb-4">
                                 <ShoppingBag className="w-12 h-12 text-maroon-600" />
                             </div>
                             <h3 className="text-3xl font-bold text-gray-800">Student / Guest Portal</h3>
                             <p className="text-gray-500 mt-2 text-lg">Browse available equipment and submit borrow requests instantly.</p>
                         </div>
 
-                        <div className="flex flex-col items-center justify-center gap-3">
+                        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
                             <button 
-                                onClick={() => setShowRequestModal(true)}
-                                className="w-full max-w-xs px-8 py-4 bg-maroon-600 hover:bg-maroon-700 text-white rounded-md font-bold shadow-lg shadow-maroon-200 transition-all hover:scale-105 flex items-center justify-center gap-3 text-lg"
+                                onClick={() => {
+                                    setKioskLearner(null);
+                                    setShowRequestModal(true);
+                                }}
+                                className="w-full sm:w-auto px-8 py-3.5 bg-maroon-600 hover:bg-maroon-700 text-white rounded-md font-bold shadow-md transition-all flex items-center justify-center gap-2.5 text-base"
                             >
-                                <ShoppingBag className="w-6 h-6" /> Start Request
+                                <ShoppingBag className="w-5 h-5" /> Start Request
                             </button>
                             <button
                                 onClick={() => navigate('/request-status')}
-                                className="w-full max-w-xs px-8 py-4 bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 rounded-md font-bold shadow-sm transition-colors flex items-center justify-center gap-3 text-lg"
+                                className="w-full sm:w-auto px-8 py-3.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 rounded-md font-bold shadow-sm transition-colors flex items-center justify-center gap-2.5 text-base"
                             >
-                                <Search className="w-6 h-6" /> Track Request
+                                <Search className="w-5 h-5" /> Track Request
                             </button>
                         </div>
                     </div>
                 </div>
 
-                <div className="py-4 border-t border-gray-100 bg-gray-50/50 flex justify-center">
+                <div className="py-3 px-4 border-t border-gray-100 bg-gray-50 flex flex-col items-center justify-center gap-1">
+                    <button 
+                        onClick={() => {
+                            setViewMode('kiosk');
+                            navigate('/kiosk');
+                        }}
+                        className="text-gray-600 hover:text-maroon-700 text-xs font-medium flex items-center gap-1.5 transition-colors px-3 py-1.5 rounded-md hover:bg-gray-100"
+                    >
+                        <Barcode className="w-3.5 h-3.5 text-maroon-600" /> Kiosk Station (RFID & Barcode)
+                    </button>
                     <button 
                         onClick={() => setViewMode('admin')}
-                        className="text-gray-500 hover:text-blue-600 text-sm font-medium flex items-center gap-2 transition-colors px-4 py-2 rounded-md hover:bg-gray-100"
+                        className="text-gray-400 hover:text-blue-600 text-xs font-medium flex items-center gap-1.5 transition-colors px-3 py-1.5 rounded-md hover:bg-gray-100"
                     >
                         <Lock className="w-3 h-3" /> Lab Admin Access
                     </button>
                 </div>
+            </div>
+        )}
+
+        {viewMode === 'kiosk' && (
+            <div className="flex-1 flex flex-col p-6 md:p-10 animate-in fade-in duration-300 bg-white">
+                {/* Centered Date & Time Header */}
+                <div className="text-center pb-5 border-b border-gray-200">
+                    <div className="flex items-center justify-center gap-2 text-2xl sm:text-3xl font-mono font-bold text-gray-800 tracking-tight">
+                        <Clock className="w-5 h-5 sm:w-6 sm:h-6 text-maroon-600" />
+                        <span>{currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                    </div>
+                    <p className="text-xs sm:text-sm font-medium text-gray-500 mt-1">
+                        {currentTime.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                    </p>
+                </div>
+
+                {/* Hardware & Cache Status Bar */}
+                <div className="py-2.5 px-4 bg-gray-50 border border-gray-200 rounded-md my-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div className="flex flex-wrap items-center gap-5 text-gray-600">
+                        <span className="inline-flex items-center gap-1.5">
+                            <Radio className={`w-3.5 h-3.5 ${scannerStatus.rfid.isConnected ? 'text-maroon-600' : 'text-gray-400'}`} />
+                            <span className="font-semibold text-gray-800">RFID Scanner:</span>
+                            {scannerStatus.rfid.isConnected ? (
+                                <span className="inline-flex items-center gap-1.5">
+                                    <span className="text-emerald-700 font-semibold" title={scannerStatus.rfid.deviceName || 'Connected'}>
+                                        Connected
+                                    </span>
+                                    {scannerStatus.rfid.source === 'webhid' && (
+                                        <button
+                                            type="button"
+                                            onClick={() => usbScannerService.disconnectRfid()}
+                                            className="text-[10px] text-gray-400 hover:text-red-600 transition-colors"
+                                            title="Disconnect USB RFID reader"
+                                        >
+                                            [Disconnect]
+                                        </button>
+                                    )}
+                                </span>
+                            ) : (
+                                <span className="inline-flex items-center gap-1.5 text-gray-500">
+                                    <span className="text-red-600 font-medium">Disconnected</span>
+                                    {usbScannerService.isWebHIDSupported() && (
+                                        <button
+                                            type="button"
+                                            onClick={handleConnectRfid}
+                                            className="px-1.5 py-0.5 text-[11px] font-medium text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded transition-colors cursor-pointer"
+                                            title="Click to connect USB RFID scanner"
+                                        >
+                                            Connect
+                                        </button>
+                                    )}
+                                </span>
+                            )}
+                        </span>
+
+                        <span className="inline-flex items-center gap-1.5">
+                            <Barcode className={`w-3.5 h-3.5 ${scannerStatus.barcode.isConnected ? 'text-gray-800' : 'text-gray-400'}`} />
+                            <span className="font-semibold text-gray-800">Barcode Scanner:</span>
+                            {scannerStatus.barcode.isConnected ? (
+                                <span className="inline-flex items-center gap-1.5">
+                                    <span className="text-emerald-700 font-semibold" title={scannerStatus.barcode.deviceName || 'Connected'}>
+                                        Connected
+                                    </span>
+                                    {scannerStatus.barcode.source === 'webhid' && (
+                                        <button
+                                            type="button"
+                                            onClick={() => usbScannerService.disconnectBarcode()}
+                                            className="text-[10px] text-gray-400 hover:text-red-600 transition-colors"
+                                            title="Disconnect USB Barcode scanner"
+                                        >
+                                            [Disconnect]
+                                        </button>
+                                    )}
+                                </span>
+                            ) : (
+                                <span className="inline-flex items-center gap-1.5 text-gray-500">
+                                    <span className="text-red-600 font-medium">Disconnected</span>
+                                    {usbScannerService.isWebHIDSupported() && (
+                                        <button
+                                            type="button"
+                                            onClick={handleConnectBarcode}
+                                            className="px-1.5 py-0.5 text-[11px] font-medium text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded transition-colors cursor-pointer"
+                                            title="Click to connect USB Barcode scanner"
+                                        >
+                                            Connect
+                                        </button>
+                                    )}
+                                </span>
+                            )}
+                        </span>
+
+                        <span>
+                            <span className="font-bold text-gray-800">{rosterCount}</span> learners in offline cache
+                        </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => syncRoster()}
+                            disabled={isRosterSyncing}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-white border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-50 text-[11px] font-medium transition-colors"
+                            title="Synchronize offline student list with master registrar database"
+                        >
+                            <RefreshCw className={`w-3 h-3 ${isRosterSyncing ? 'animate-spin text-maroon-600' : ''}`} />
+                            {isRosterSyncing ? 'Syncing...' : 'Sync Roster'}
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const next = !kioskSound;
+                                setKioskSound(next);
+                                usbScannerService.setSoundEnabled(next);
+                            }}
+                            className="p-1 rounded bg-white border border-gray-300 text-gray-600 hover:bg-gray-100 transition-colors"
+                            title={kioskSound ? 'Mute scanner sounds' : 'Enable scanner sounds'}
+                        >
+                            {kioskSound ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5 text-red-500" />}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Scan Toast */}
+                {kioskToast && (
+                    <div className={`mb-4 py-2.5 px-4 rounded-md text-xs flex items-center justify-between gap-2 border animate-in slide-in-from-top-2 ${
+                        kioskToast.type === 'success' ? 'bg-emerald-50 text-emerald-900 border-emerald-200' :
+                        kioskToast.type === 'error' ? 'bg-red-50 text-red-900 border-red-200' :
+                        'bg-blue-50 text-blue-900 border-blue-200'
+                    }`}>
+                        <div>
+                            <span className="font-bold">{kioskToast.message}</span>
+                            {kioskToast.submessage && <span className="opacity-90 ml-2">— {kioskToast.submessage}</span>}
+                        </div>
+                        <button onClick={() => setKioskToast(null)} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                )}
+
+                {/* Center Hero Card OR In-Card USIS Verification & Confirmation View */}
+                {!pendingConfirmLearner ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-center my-6 max-w-xl mx-auto w-full">
+                        <div className="w-28 h-28 rounded-full bg-maroon-50 border-2 border-maroon-200 flex items-center justify-center mb-6">
+                            <Radio className="w-14 h-14 text-maroon-600" />
+                        </div>
+
+                        {/* Logo & Headline Stack */}
+                        <div className="flex flex-col items-center justify-center">
+                            <img
+                                src="/img/leon-nhs-id-logo.png"
+                                alt="LEON NHS ID"
+                                className="h-12 sm:h-14 w-auto object-contain mb-3"
+                            />
+                            <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight uppercase">
+                                TAP YOUR CARD WITH RFID
+                            </h2>
+                        </div>
+
+                        {/* Manual LRN Form Fallback */}
+                        <form onSubmit={handleManualLrnSubmit} className="mt-8 w-full max-w-md">
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={manualLrn}
+                                    onChange={(e) => setManualLrn(e.target.value)}
+                                    placeholder="Or enter 12-digit Learner Reference No. (LRN)..."
+                                    className="flex-1 px-4 py-2.5 bg-white border border-gray-300 rounded-md text-sm text-gray-800 focus:ring-2 focus:ring-maroon-500 outline-none"
+                                />
+                                <button
+                                    type="submit"
+                                    className="px-5 py-2.5 bg-maroon-600 hover:bg-maroon-700 text-white rounded-md font-bold text-sm shadow-sm transition-colors flex items-center gap-1.5"
+                                >
+                                    <ArrowRight className="w-4 h-4" /> Start
+                                </button>
+                            </div>
+                            <p className="text-[11px] text-gray-400 mt-1.5 text-left">
+                                Learner ID cards from other schools can also be entered manually.
+                            </p>
+                        </form>
+                    </div>
+                ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center w-full my-4">
+                        <LearnerConfirmModal
+                            isOpen={Boolean(pendingConfirmLearner)}
+                            learner={pendingConfirmLearner}
+                            onConfirm={handleLearnerConfirmed}
+                            onCancel={handleLearnerCancel}
+                            inline={true}
+                        />
+                    </div>
+                )}
+
+                {/* Bottom Actions */}
+                {!pendingConfirmLearner && (
+                    <div className="pt-4 border-t border-gray-200 flex flex-wrap items-center justify-between gap-3">
+                        <button
+                            onClick={() => {
+                                setKioskLearner(null);
+                                setShowRequestModal(true);
+                            }}
+                            className="text-xs font-semibold text-gray-600 hover:text-maroon-700 flex items-center gap-1.5 px-3 py-1.5 rounded hover:bg-gray-100 transition-colors"
+                        >
+                            <ShoppingBag className="w-3.5 h-3.5" /> Start Request Form (Without ID)
+                        </button>
+
+                        <button
+                            onClick={() => {
+                                setViewMode('landing');
+                                navigate('/');
+                            }}
+                            className="text-xs font-semibold text-gray-400 hover:text-gray-700 flex items-center gap-1.5 px-3 py-1.5 rounded hover:bg-gray-100 transition-colors"
+                        >
+                            <ArrowLeft className="w-3.5 h-3.5" /> Exit Kiosk Station
+                        </button>
+                    </div>
+                )}
             </div>
         )}
 
@@ -416,7 +849,7 @@ const Login: React.FC<LoginProps> = ({
                                 </div>
                             </div>
 
-                            <div className="bg-gradient-to-r from-maroon-50 to-white border border-maroon-100 rounded-md p-6 shadow-sm">
+                            <div className="bg-maroon-50/50 border border-maroon-100 rounded-md p-6 shadow-sm">
                                 <div className="flex items-center gap-3 mb-2">
                                     <Box className="w-5 h-5 text-maroon-600" />
                                     <h3 className="text-lg font-bold text-gray-800">Availability Status</h3>
@@ -801,7 +1234,28 @@ const Login: React.FC<LoginProps> = ({
 
       {customFooterText && <p className="relative z-10 text-center text-xs text-gray-400">{customFooterText}</p>}
 
-      {showRequestModal && <PublicRequestModal onClose={() => setShowRequestModal(false)} />}
+      {showRequestModal && (
+        <PublicRequestModal 
+          onClose={() => {
+            setShowRequestModal(false);
+            setKioskLearner(null);
+            setKioskLearnerEmail('');
+          }} 
+          initialLearner={kioskLearner}
+          initialEmail={kioskLearnerEmail}
+          isKioskMode={viewMode === 'kiosk'}
+        />
+      )}
+
+      {/* USIS Learner Confirmation Modal (Fallback for non-kiosk mode) */}
+      {viewMode !== 'kiosk' && (
+        <LearnerConfirmModal
+          isOpen={showConfirmModal}
+          learner={pendingConfirmLearner}
+          onConfirm={handleLearnerConfirmed}
+          onCancel={handleLearnerCancel}
+        />
+      )}
     </div>
   );
 };

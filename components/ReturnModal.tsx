@@ -33,7 +33,11 @@ const ReturnModal: React.FC<ReturnModalProps> = ({ record, item, onConfirm, onCa
   };
 
   const modalContent = (
-    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200"
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="bg-white backdrop-blur-2xl rounded-md shadow-2xl w-full max-w-md relative overflow-hidden border border-gray-200 animate-in fade-in zoom-in duration-200">
         <div className="bg-green-600 px-6 py-4 flex justify-between items-center">
             <h3 className="text-lg font-bold text-white flex items-center gap-2">

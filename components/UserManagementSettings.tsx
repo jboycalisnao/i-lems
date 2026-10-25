@@ -556,7 +556,11 @@ export const UserManagementSettings: React.FC<UserManagementSettingsProps> = ({ 
 
       {/* CREATE / EDIT USER MODAL */}
       {isModalOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
+        <div
+          className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+        >
           <div className="bg-white rounded-md shadow-2xl max-w-2xl w-full overflow-hidden border border-gray-200 flex flex-col max-h-[92vh]">
             {/* Modal Header */}
             <div className="px-6 py-4 bg-blue-600 text-white flex justify-between items-center flex-shrink-0">
@@ -840,7 +844,11 @@ export const UserManagementSettings: React.FC<UserManagementSettingsProps> = ({ 
 
       {/* CONFIRM DELETE MODAL */}
       {userToDelete && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
+        <div
+          className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+        >
           <div className="bg-white rounded-md shadow-2xl max-w-md w-full p-6 border border-gray-200 text-center">
             <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-4">
               <Trash2 className="w-6 h-6" />
@@ -870,7 +878,11 @@ export const UserManagementSettings: React.FC<UserManagementSettingsProps> = ({ 
 
       {/* SQL DATABASE MIGRATION MODAL */}
       {isSqlModalOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
+        <div
+          className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+        >
           <div className="bg-white rounded-md shadow-2xl max-w-2xl w-full p-6 border border-gray-200 flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between border-b border-gray-200 pb-3 mb-4">
               <div className="flex items-center gap-2">

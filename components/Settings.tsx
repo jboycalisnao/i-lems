@@ -976,7 +976,7 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
 
                         {/* Live Account Stats if connected */}
                         {ddownloadAccount && (
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 bg-gradient-to-r from-blue-50 via-sky-50 to-indigo-50 border border-blue-200 rounded-xl">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 bg-blue-50 border border-blue-200 rounded-xl">
                                 <div>
                                     <span className="block text-[11px] font-bold text-blue-700 uppercase">Account Email</span>
                                     <span className="text-sm font-semibold text-gray-900 truncate block" title={ddownloadAccount.email}>
@@ -1037,7 +1037,11 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
 
         {/* Delete & Reassign Category Modal */}
         {categoryToDelete && typeof document !== 'undefined' && createPortal(
-            <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] flex items-center justify-center p-3 md:p-6 overflow-y-auto bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div
+                className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] flex items-center justify-center p-3 md:p-6 overflow-y-auto bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+                role="dialog"
+                aria-modal="true"
+            >
                 <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 border border-gray-100 animate-in zoom-in-95 duration-200 space-y-4">
                     <div className="flex items-start gap-4">
                         <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0">

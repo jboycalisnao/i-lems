@@ -228,11 +228,29 @@ export const mapPropertyItem = (data: any): PropertyItem => {
     }
   }
 
+  // Extract multi-unit propertyNumbers if stored as array or in notes metadata
+  let propertyNumbers: string[] | undefined = Array.isArray(data.propertyNumbers || data.property_numbers)
+    ? (data.propertyNumbers || data.property_numbers).filter(Boolean).map(String)
+    : undefined;
+
+  if (notes.includes('<!--SYSTEM_PROP_NUMS:')) {
+    const metaMatch = notes.match(/<!--SYSTEM_PROP_NUMS:(.*?)-->/);
+    if (metaMatch && metaMatch[1]) {
+      try {
+        const parsed = JSON.parse(metaMatch[1]);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          propertyNumbers = parsed.map(String);
+        }
+      } catch {}
+    }
+  }
+
   const primaryPis = data.pisCode || data.pis_code || (pisCodes && pisCodes.length > 0 ? pisCodes[0] : undefined);
+  const primaryPropNum = String(data.propertyNumber || data.property_number || (propertyNumbers && propertyNumbers.length > 0 ? propertyNumbers[0] : `LNHS-PROP-${Date.now().toString().slice(-4)}`));
 
   return {
     id: String(data.id || crypto.randomUUID()),
-    propertyNumber: String(data.propertyNumber || data.property_number || `LNHS-PROP-${Date.now().toString().slice(-4)}`),
+    propertyNumber: primaryPropNum,
     name: String(data.name || 'Untitled Property Asset'),
     category: String(data.category || 'General Property'),
     description: String(data.description || ''),
@@ -252,7 +270,8 @@ export const mapPropertyItem = (data: any): PropertyItem => {
     lastInspected: data.lastInspected || data.last_inspected || '',
     shortId: data.shortId || data.short_id || '',
     pisCode: primaryPis,
-    pisCodes: pisCodes && pisCodes.length > 0 ? pisCodes : (primaryPis ? [primaryPis] : undefined)
+    pisCodes: pisCodes && pisCodes.length > 0 ? pisCodes : (primaryPis ? [primaryPis] : undefined),
+    propertyNumbers: propertyNumbers && propertyNumbers.length > 0 ? propertyNumbers : (primaryPropNum ? [primaryPropNum] : undefined)
   };
 };
 
@@ -387,6 +406,13 @@ export const savePropertyItem = async (item: PropertyItem): Promise<{ success: b
   if (item.pisCodes && item.pisCodes.length > 1) {
     const cleanNotes = serializedNotes.replace(/<!--SYSTEM_PIS_CODES:.*?-->/g, '').trim();
     const tag = `<!--SYSTEM_PIS_CODES:${JSON.stringify(item.pisCodes)}-->`;
+    serializedNotes = cleanNotes ? `${cleanNotes}\n${tag}` : tag;
+  }
+
+  // If item has multiple Property Numbers, embed them in notes metadata
+  if (item.propertyNumbers && item.propertyNumbers.length > 1) {
+    const cleanNotes = serializedNotes.replace(/<!--SYSTEM_PROP_NUMS:.*?-->/g, '').trim();
+    const tag = `<!--SYSTEM_PROP_NUMS:${JSON.stringify(item.propertyNumbers)}-->`;
     serializedNotes = cleanNotes ? `${cleanNotes}\n${tag}` : tag;
   }
 
@@ -594,12 +620,168 @@ export const calculatePropertyStats = (items: PropertyItem[]): PropertyStats => 
 };
 
 /**
- * Generate Next Property Number Suggestion
+ * Category Code mapping for DepEd Property numbering
  */
-export const generateNextPropertyNumber = (items: PropertyItem[], prefix = 'LNHS-PROP'): string => {
-  const currentYear = new Date().getFullYear();
-  const nextSeq = (items.length + 1).toString().padStart(3, '0');
-  return `${prefix}-${currentYear}-${nextSeq}`;
+export const getCategoryCode = (category: string = ''): string => {
+  const cat = (category || '').toLowerCase();
+  if (cat.includes('science') || cat.includes('lab')) return 'SCI';
+  if (cat.includes('it &') || cat.includes('digital') || cat.includes('dcp') || cat.includes('computer')) return 'DCP';
+  if (cat.includes('furniture') || cat.includes('fixture')) return 'FURN';
+  if (cat.includes('audio') || cat.includes('visual') || cat.includes('avr') || cat.includes('electronic')) return 'AVR';
+  if (cat.includes('appliance') || cat.includes('hvac') || cat.includes('aircon')) return 'HVAC';
+  if (cat.includes('sport') || cat.includes('pe')) return 'SPORTS';
+  if (cat.includes('tool') || cat.includes('maintenance') || cat.includes('facility')) return 'TOOL';
+  if (cat.includes('safe') || cat.includes('security') || cat.includes('disaster')) return 'SAFE';
+  if (cat.includes('office') || cat.includes('admin')) return 'ADMIN';
+  if (cat.includes('book') || cat.includes('learning')) return 'LRM';
+  return 'PROP';
+};
+
+/**
+ * Classification Code mapping for DepEd Property numbering:
+ * - Capital Outlay (≥ ₱50,000, PPE / PAR) -> PPE
+ * - Semi-Expendable (< ₱50,000, ICS) -> SE
+ * - Donated -> DON
+ */
+export const getClassificationCode = (classification: PropertyInventoryType = 'Semi-Expendable'): string => {
+  switch (classification) {
+    case 'Capital Outlay':
+      return 'PPE';
+    case 'Semi-Expendable':
+      return 'SE';
+    case 'Donated':
+      return 'DON';
+    default:
+      return 'SE';
+  }
+};
+
+/**
+ * Generate standard prefix based on Classification and Category:
+ * Example:
+ * - Semi-Expendable + Science -> LNHS-SE-SCI
+ * - Capital Outlay + IT DCP -> LNHS-PPE-DCP
+ * - Donated + Furniture -> LNHS-DON-FURN
+ */
+export const getPropertyNumberPrefix = (
+  classification: PropertyInventoryType = 'Semi-Expendable',
+  category: string = 'General Property'
+): string => {
+  const classCode = getClassificationCode(classification);
+  const catCode = getCategoryCode(category);
+  return `LNHS-${classCode}-${catCode}`;
+};
+
+/**
+ * Generate Next N Sequential Property Numbers (Collision-Free & Duplicate-Safe)
+ * Checks all existing property codes and propertyNumbers in the database,
+ * detects the highest sequence used for this classification, category, and year,
+ * and generates consecutive unique codes.
+ */
+export const generateNextPropertyNumbers = (
+  items: PropertyItem[] = [],
+  count: number = 1,
+  classification: PropertyInventoryType = 'Semi-Expendable',
+  category: string = 'General Property',
+  year: number = new Date().getFullYear()
+): string[] => {
+  const prefix = getPropertyNumberPrefix(classification, category);
+  const catCode = getCategoryCode(category);
+
+  // Set of all property codes across all existing items to guarantee zero duplicate
+  const existingSet = new Set<string>();
+  items.forEach(it => {
+    if (it.propertyNumber) existingSet.add(it.propertyNumber.trim().toUpperCase());
+    if (it.propertyNumbers && Array.isArray(it.propertyNumbers)) {
+      it.propertyNumbers.forEach(pn => pn && existingSet.add(pn.trim().toUpperCase()));
+    }
+  });
+
+  // Find highest sequence number among existing items
+  let maxSeq = 0;
+  const regexes = [
+    // Standard exact prefix: LNHS-SE-SCI-2026-001
+    new RegExp(`^${prefix}-${year}-(\\d+)$`, 'i'),
+    // Any classification for same category & year: LNHS-(?:SE|PPE|CO|DON)-${catCode}-${year}-(\\d+)$
+    new RegExp(`^LNHS-(?:SE|PPE|CO|DON)-${catCode}-${year}-(\\d+)$`, 'i'),
+    // Legacy without classification: LNHS-${catCode}-${year}-(\\d+)$
+    new RegExp(`^LNHS-${catCode}-${year}-(\\d+)$`, 'i'),
+    // Legacy general: LNHS-PROP-${year}-(\\d+)$
+    new RegExp(`^LNHS-PROP-${year}-(\\d+)$`, 'i')
+  ];
+
+  existingSet.forEach(num => {
+    for (const rx of regexes) {
+      const match = num.match(rx);
+      if (match && match[1]) {
+        const val = parseInt(match[1], 10);
+        if (!isNaN(val) && val > maxSeq) {
+          maxSeq = val;
+        }
+        break;
+      }
+    }
+  });
+
+  const result: string[] = [];
+  let currSeq = maxSeq + 1;
+  const total = Math.max(1, count);
+
+  for (let i = 0; i < total; i++) {
+    let candidate = `${prefix}-${year}-${currSeq.toString().padStart(3, '0')}`;
+    while (existingSet.has(candidate.toUpperCase())) {
+      currSeq++;
+      candidate = `${prefix}-${year}-${currSeq.toString().padStart(3, '0')}`;
+    }
+    existingSet.add(candidate.toUpperCase());
+    result.push(candidate);
+    currSeq++;
+  }
+
+  return result;
+};
+
+/**
+ * Generate Next Single Property Number Suggestion
+ * Supports both (items, classification, category) and legacy (items, prefix)
+ */
+export const generateNextPropertyNumber = (
+  items: PropertyItem[] = [],
+  classificationOrPrefix: PropertyInventoryType | string = 'Semi-Expendable',
+  category: string = 'General Property'
+): string => {
+  // If an explicit prefix string was passed (e.g. 'LNHS-PROP' or 'LNHS-SCI')
+  if (typeof classificationOrPrefix === 'string' && classificationOrPrefix.startsWith('LNHS-')) {
+    const year = new Date().getFullYear();
+    const existingSet = new Set<string>();
+    let maxSeq = 0;
+    const rx = new RegExp(`^${classificationOrPrefix}-${year}-(\\d+)$`, 'i');
+
+    items.forEach(it => {
+      if (it.propertyNumber) {
+        existingSet.add(it.propertyNumber.trim().toUpperCase());
+        const m = it.propertyNumber.match(rx);
+        if (m && m[1]) {
+          const val = parseInt(m[1], 10);
+          if (!isNaN(val) && val > maxSeq) maxSeq = val;
+        }
+      }
+      if (it.propertyNumbers && Array.isArray(it.propertyNumbers)) {
+        it.propertyNumbers.forEach(pn => pn && existingSet.add(pn.trim().toUpperCase()));
+      }
+    });
+
+    let seq = maxSeq + 1;
+    let candidate = `${classificationOrPrefix}-${year}-${seq.toString().padStart(3, '0')}`;
+    while (existingSet.has(candidate.toUpperCase())) {
+      seq++;
+      candidate = `${classificationOrPrefix}-${year}-${seq.toString().padStart(3, '0')}`;
+    }
+    return candidate;
+  }
+
+  const classification = (classificationOrPrefix as PropertyInventoryType) || 'Semi-Expendable';
+  return generateNextPropertyNumbers(items, 1, classification, category)[0];
 };
 
 const PIS_SEQUENCE_STORAGE_PREFIX = 'stelab_pis_seq_';

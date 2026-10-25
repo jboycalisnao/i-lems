@@ -56,8 +56,8 @@ export const QuickPISEncoderModal: React.FC<QuickPISEncoderModalProps> = ({
     } else {
       setFoundItem(null);
       setIsNew(true);
-      // Auto-generate the corresponding property code
-      const nextPropCode = generateNextPropertyNumber(existingItems);
+      // Auto-generate the corresponding property code based on classification & category
+      const nextPropCode = generateNextPropertyNumber(existingItems, 'Semi-Expendable', PROPERTY_CATEGORIES[0]);
       setNewProp(prev => ({
         ...prev,
         pisCode: target,
@@ -105,7 +105,11 @@ export const QuickPISEncoderModal: React.FC<QuickPISEncoderModalProps> = ({
   };
 
   const modalContent = (
-    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen min-h-screen z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto animate-in fade-in duration-200"
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="bg-white rounded-md shadow-2xl max-w-2xl w-full overflow-hidden border border-gray-200 flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="px-6 py-4 bg-yellow-500 text-gray-950 flex justify-between items-center flex-shrink-0 border-b border-yellow-600">
@@ -250,7 +254,17 @@ export const QuickPISEncoderModal: React.FC<QuickPISEncoderModalProps> = ({
                   <label className="block font-bold text-gray-700 mb-1">Category *</label>
                   <select
                     value={newProp.category}
-                    onChange={(e) => setNewProp(prev => ({ ...prev, category: e.target.value }))}
+                    onChange={(e) => {
+                      const newCat = e.target.value;
+                      setNewProp(prev => {
+                        const newPropCode = generateNextPropertyNumber(existingItems, prev.inventoryType || 'Semi-Expendable', newCat);
+                        return {
+                          ...prev,
+                          category: newCat,
+                          propertyNumber: newPropCode
+                        };
+                      });
+                    }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
                   >
                     {PROPERTY_CATEGORIES.map(cat => (
@@ -347,7 +361,19 @@ export const QuickPISEncoderModal: React.FC<QuickPISEncoderModalProps> = ({
                     step="0.01"
                     min="0"
                     value={newProp.unitValue || 0}
-                    onChange={(e) => setNewProp(prev => ({ ...prev, unitValue: parseFloat(e.target.value) || 0 }))}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value) || 0;
+                      const newClass = val >= 50000 ? 'Capital Outlay' : 'Semi-Expendable';
+                      setNewProp(prev => {
+                        const newPropCode = generateNextPropertyNumber(existingItems, newClass, prev.category || PROPERTY_CATEGORIES[0]);
+                        return {
+                          ...prev,
+                          unitValue: val,
+                          inventoryType: newClass,
+                          propertyNumber: newPropCode
+                        };
+                      });
+                    }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md font-bold text-emerald-800 focus:ring-2 focus:ring-blue-600 focus:outline-none"
                   />
                 </div>
