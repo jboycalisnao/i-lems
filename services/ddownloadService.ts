@@ -161,3 +161,98 @@ export async function uploadItemDocumentToDDownload(
     };
   }
 }
+
+/**
+ * Compress an image file to a lightweight data URL for responsive, zero-lag local rendering
+ * and upload the full master file to DDownload cloud storage.
+ */
+export async function uploadItemPictureWithDDownload(
+  file: File,
+  apiKey?: string
+): Promise<{
+  success: boolean;
+  imageUrl: string;
+  fileCode?: string;
+  downloadUrl?: string;
+  warning?: string;
+  error?: string;
+}> {
+  // Step 1: Create a client-side compressed preview data URL
+  let optimizedDataUrl = '';
+  try {
+    optimizedDataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Failed to read image file'));
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Invalid image format'));
+        img.onload = () => {
+          const maxDim = 800;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(e.target?.result as string);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
+        };
+        img.src = e.target?.result as string;
+      };
+      reader.readAsDataURL(file);
+    });
+  } catch (err: any) {
+    return {
+      success: false,
+      imageUrl: '',
+      error: err.message || 'Could not process image file.'
+    };
+  }
+
+  // Step 2: Upload original image to DDownload
+  const key = apiKey?.trim() || getStoredDDownloadApiKey();
+  if (!key) {
+    return {
+      success: true,
+      imageUrl: optimizedDataUrl,
+      warning: 'Picture saved locally. To backup to DDownload cloud, add your DDownload API key in Settings.'
+    };
+  }
+
+  try {
+    const uploadRes = await uploadItemDocumentToDDownload(file, 'Other', key);
+    if (uploadRes.success && uploadRes.attachment) {
+      return {
+        success: true,
+        imageUrl: optimizedDataUrl,
+        fileCode: uploadRes.attachment.fileCode,
+        downloadUrl: uploadRes.attachment.downloadUrl
+      };
+    }
+    return {
+      success: true,
+      imageUrl: optimizedDataUrl,
+      warning: uploadRes.error || 'Picture saved locally, but DDownload cloud backup could not complete.'
+    };
+  } catch (err: any) {
+    return {
+      success: true,
+      imageUrl: optimizedDataUrl,
+      warning: 'Picture saved locally. DDownload cloud upload failed.'
+    };
+  }
+}
+

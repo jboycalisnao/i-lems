@@ -86,7 +86,10 @@ const mapInventoryItem = (data: any): InventoryItem => {
             ? null
             : toNumber(readField(data, 'maxBorrowable', 'max_borrowable', 'maxborrowable')),
         boxes: parseArray(readField(data, 'boxes')),
-        attachments: attachments || []
+        attachments: attachments || [],
+        imageUrl: readField(data, 'imageUrl', 'image_url', 'imageurl') || undefined,
+        imageFileCode: readField(data, 'imageFileCode', 'image_file_code', 'imagefilecode') || undefined,
+        imageDDownloadUrl: readField(data, 'imageDDownloadUrl', 'image_ddownload_url', 'imageddownloadurl') || undefined
     };
 };
 
@@ -505,14 +508,17 @@ export const saveItem = async (item: InventoryItem): Promise<{ success: boolean;
         isConsumable: item.isConsumable,
         maxBorrowable: item.maxBorrowable,
         boxes: item.boxes || [],
-        attachments: item.attachments || []
+        attachments: item.attachments || [],
+        image_url: item.imageUrl || null,
+        image_file_code: item.imageFileCode || null,
+        image_ddownload_url: item.imageDDownloadUrl || null
     };
 
     let error: any = null;
     const res = await supabase.from('inventory_items').upsert(payload);
-    if (res.error && (res.error.message?.includes('attachments') || res.error.message?.includes('schema cache'))) {
-        // Fallback: If table does not yet have 'attachments' column, save other fields to DB while retaining localStorage cache
-        const { attachments: _, ...fallbackPayload } = payload;
+    if (res.error && (res.error.message?.includes('attachments') || res.error.message?.includes('image') || res.error.message?.includes('schema cache'))) {
+        // Fallback: If table does not yet have 'attachments' or 'image' columns, save baseline fields to DB while retaining localStorage cache
+        const { attachments: _, image_url: __, image_file_code: ___, image_ddownload_url: ____, ...fallbackPayload } = payload;
         const retryRes = await supabase.from('inventory_items').upsert(fallbackPayload);
         error = retryRes.error;
     } else {

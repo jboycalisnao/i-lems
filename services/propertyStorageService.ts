@@ -271,7 +271,11 @@ export const mapPropertyItem = (data: any): PropertyItem => {
     shortId: data.shortId || data.short_id || '',
     pisCode: primaryPis,
     pisCodes: pisCodes && pisCodes.length > 0 ? pisCodes : (primaryPis ? [primaryPis] : undefined),
-    propertyNumbers: propertyNumbers && propertyNumbers.length > 0 ? propertyNumbers : (primaryPropNum ? [primaryPropNum] : undefined)
+    propertyNumbers: propertyNumbers && propertyNumbers.length > 0 ? propertyNumbers : (primaryPropNum ? [primaryPropNum] : undefined),
+    imageUrl: data.imageUrl || data.image_url || data.imageurl || undefined,
+    imageFileCode: data.imageFileCode || data.image_file_code || data.imagefilecode || undefined,
+    imageDDownloadUrl: data.imageDDownloadUrl || data.image_ddownload_url || data.imageddownloadurl || undefined,
+    attachments: Array.isArray(data.attachments) ? data.attachments : []
   };
 };
 
@@ -437,24 +441,40 @@ export const savePropertyItem = async (item: PropertyItem): Promise<{ success: b
     par_number: item.parNumber?.trim() || null,
     notes: serializedNotes,
     last_inspected: item.lastInspected || null,
-    short_id: item.shortId
+    short_id: item.shortId,
+    image_url: item.imageUrl || null,
+    image_file_code: item.imageFileCode || null,
+    image_ddownload_url: item.imageDDownloadUrl || null,
+    attachments: item.attachments || []
   };
 
   // 1. Direct Cloud Database Upsert
   if (supabase && typeof supabase.from === 'function') {
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('property_items')
         .upsert(dbPayload)
         .select()
         .single();
+
+      if (error && (error.message?.includes('image') || error.message?.includes('attachments') || error.message?.includes('schema cache'))) {
+        // Fallback: If migration hasn't been run yet, retry without image / attachment columns
+        const { image_url: _, image_file_code: __, image_ddownload_url: ___, attachments: ____, ...fallbackPayload } = dbPayload;
+        const retryRes = await supabase
+          .from('property_items')
+          .upsert(fallbackPayload)
+          .select()
+          .single();
+        data = retryRes.data;
+        error = retryRes.error;
+      }
 
       if (error) {
         console.error('Supabase property_items upsert error:', error);
         return { success: false, item, message: `Cloud database error: ${error.message}` };
       }
       if (data) {
-        item = mapPropertyItem(data);
+        item = mapPropertyItem({ ...data, imageUrl: item.imageUrl, imageFileCode: item.imageFileCode, imageDDownloadUrl: item.imageDDownloadUrl });
       }
     } catch (err: any) {
       console.error('Supabase property_items exception:', err);

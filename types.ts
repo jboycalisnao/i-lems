@@ -33,6 +33,9 @@ export interface InventoryItem {
   maxBorrowable?: number | null; // Limit the number of items available for loan (e.g. unboxed stock)
   boxes?: InventoryBox[]; // Boxed inventory tracking
   attachments?: ItemAttachment[]; // DDownload cloud-hosted manuals, safety sheets, and documents
+  imageUrl?: string; // Profile picture URL / thumbnail
+  imageFileCode?: string; // DDownload file code (e.g. gi4o0tlro01u)
+  imageDDownloadUrl?: string; // DDownload direct link (e.g. https://ddownload.com/gi4o0tlro01u)
 }
 
 export enum ItemCondition {
@@ -181,6 +184,10 @@ export interface PropertyItem {
   pisCode?: string; // Property Inventory Sticker Code (e.g. PIS-26-04928)
   pisCodes?: string[]; // Multiple PIS Sticker codes for multi-quantity items (e.g. ["PIS-26-0001", "PIS-26-0002"])
   propertyNumbers?: string[]; // Multiple individual sequential Property Codes for multi-quantity items (e.g. ["LNHS-SE-SCI-2026-001", "LNHS-SE-SCI-2026-002"])
+  imageUrl?: string; // Profile picture URL / thumbnail
+  imageFileCode?: string; // DDownload file code (e.g. gi4o0tlro01u)
+  imageDDownloadUrl?: string; // DDownload direct link (e.g. https://ddownload.com/gi4o0tlro01u)
+  attachments?: ItemAttachment[]; // DDownload cloud-hosted attachments
 }
 
 export interface PropertyStats {

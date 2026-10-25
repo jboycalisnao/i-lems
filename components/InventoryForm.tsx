@@ -4,9 +4,15 @@ import { createPortal } from 'react-dom';
 import { InventoryItem, ItemCondition, Category, InventoryBox, ItemAttachment } from '../types';
 import { 
   X, Box, Lock, Plus, PackageOpen, Trash2, Save, Cloud, FileText, 
-  Upload, Download, ExternalLink, Loader2, Paperclip, Copy, Check, AlertCircle, Microscope 
+  Upload, Download, ExternalLink, Loader2, Paperclip, Copy, Check, AlertCircle, Microscope,
+  Camera, Image as ImageIcon
 } from 'lucide-react';
-import { uploadItemDocumentToDDownload, formatBytes, getStoredDDownloadApiKey } from '../services/ddownloadService';
+import { 
+  uploadItemDocumentToDDownload, 
+  uploadItemPictureWithDDownload, 
+  formatBytes, 
+  getStoredDDownloadApiKey 
+} from '../services/ddownloadService';
 import LocationSearchSelect from './LocationSearchSelect';
 
 interface InventoryFormProps {
@@ -32,7 +38,10 @@ const InventoryForm: React.FC<InventoryFormProps> = ({ initialData, categories, 
       isConsumable: false,
       maxBorrowable: undefined,
       boxes: [],
-      attachments: []
+      attachments: [],
+      imageUrl: '',
+      imageFileCode: '',
+      imageDDownloadUrl: ''
     }
   );
 
@@ -42,6 +51,11 @@ const InventoryForm: React.FC<InventoryFormProps> = ({ initialData, categories, 
   const [docUploadError, setDocUploadError] = useState<string | null>(null);
   const [copiedDocId, setCopiedDocId] = useState<string | null>(null);
   const docInputRef = useRef<HTMLInputElement>(null);
+
+  // Equipment Profile Picture State
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [imageUploadStatus, setImageUploadStatus] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const hasLimit = initialData?.maxBorrowable !== undefined && initialData?.maxBorrowable !== null;
   const [useBorrowLimit, setUseBorrowLimit] = useState<boolean>(hasLimit);
@@ -128,6 +142,39 @@ const InventoryForm: React.FC<InventoryFormProps> = ({ initialData, categories, 
     setTimeout(() => setCopiedDocId(null), 2000);
   };
 
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingImage(true);
+    setImageUploadStatus(null);
+    try {
+      const res = await uploadItemPictureWithDDownload(file);
+      if (res.success) {
+        setFormData(prev => ({
+          ...prev,
+          imageUrl: res.imageUrl,
+          imageFileCode: res.fileCode || prev.imageFileCode,
+          imageDDownloadUrl: res.downloadUrl || prev.imageDDownloadUrl
+        }));
+        if (res.fileCode) {
+          setImageUploadStatus(`Backed up to DDownload (${res.fileCode})`);
+        } else if (res.warning) {
+          setImageUploadStatus(res.warning);
+        } else {
+          setImageUploadStatus('Picture updated successfully');
+        }
+      } else {
+        alert(res.error || 'Failed to process image file.');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Image upload error.');
+    } finally {
+      setIsUploadingImage(false);
+      if (imageInputRef.current) imageInputRef.current.value = '';
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.quantity || !formData.location) {
@@ -181,6 +228,86 @@ const InventoryForm: React.FC<InventoryFormProps> = ({ initialData, categories, 
           </div>
 
           <div className="space-y-4">
+            {/* Equipment Profile Picture / Avatar Card */}
+            <div className="p-4 bg-gray-50 border border-gray-200 rounded-md flex flex-col sm:flex-row items-center gap-4">
+              <div className="relative group w-24 h-24 rounded-md border border-gray-300 bg-white overflow-hidden flex items-center justify-center flex-shrink-0 shadow-xs">
+                {formData.imageUrl ? (
+                  <img src={formData.imageUrl} alt={formData.name || 'Equipment'} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="flex flex-col items-center justify-center text-gray-400 p-2 text-center">
+                    <Camera className="w-7 h-7 mb-1 text-gray-400" />
+                    <span className="text-[10px] font-medium leading-tight">No Picture</span>
+                  </div>
+                )}
+                {isUploadingImage && (
+                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white">
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                  </div>
+                )}
+              </div>
+              
+              <div className="flex-1 text-center sm:text-left space-y-2">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900">Equipment Picture (Profile Avatar)</h3>
+                  <p className="text-xs text-gray-500">Upload a photo to display on equipment cards, loan lists, and barcode scans. Backed up directly to DDownload cloud storage.</p>
+                </div>
+                
+                <div className="flex flex-wrap items-center gap-2 justify-center sm:justify-start">
+                  <input 
+                    type="file" 
+                    ref={imageInputRef} 
+                    onChange={handleImageFileChange} 
+                    accept="image/*" 
+                    className="hidden" 
+                  />
+                  <button
+                    type="button"
+                    onClick={() => imageInputRef.current?.click()}
+                    disabled={isUploadingImage}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-xs disabled:opacity-50 transition-colors"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    {formData.imageUrl ? 'Change Picture' : 'Upload via DDownload'}
+                  </button>
+
+                  {formData.imageUrl && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormData(prev => ({ ...prev, imageUrl: '', imageFileCode: '', imageDDownloadUrl: '' }));
+                        setImageUploadStatus(null);
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-gray-300 hover:bg-red-50 hover:text-red-600 text-gray-600 rounded-md text-xs font-medium transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Remove
+                    </button>
+                  )}
+
+                  {formData.imageDDownloadUrl && (
+                    <a
+                      href={formData.imageDDownloadUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md text-xs font-medium border border-gray-300 transition-colors"
+                      title="Open master file on DDownload"
+                    >
+                      <Cloud className="w-3.5 h-3.5 text-blue-600" />
+                      <span>DDownload File</span>
+                      <ExternalLink className="w-3 h-3 text-gray-400" />
+                    </a>
+                  )}
+                </div>
+
+                {imageUploadStatus && (
+                  <div className="text-[11px] text-emerald-800 font-medium flex items-center gap-1 justify-center sm:justify-start">
+                    <Check className="w-3 h-3 text-emerald-600" />
+                    <span>{imageUploadStatus}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Item Name *</label>
               <input

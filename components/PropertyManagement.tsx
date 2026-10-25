@@ -1641,9 +1641,22 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                 </span>
               </div>
 
-              {/* Title and specs */}
-              <h4 className="font-bold text-gray-900 text-sm leading-snug line-clamp-1">{item.name}</h4>
-              <p className="text-xs text-gray-500 line-clamp-2 mt-1 mb-3">{item.description || 'No detailed specifications recorded.'}</p>
+              {/* Title and specs with Avatar thumbnail */}
+              <div className="flex items-start gap-3 my-2">
+                {item.imageUrl ? (
+                  <div className="w-12 h-12 rounded-md border border-gray-200 bg-white overflow-hidden flex-shrink-0 shadow-2xs">
+                    <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
+                  </div>
+                ) : (
+                  <div className="w-12 h-12 rounded-md border border-gray-200 bg-gray-50 flex items-center justify-center flex-shrink-0 text-gray-400">
+                    <Building2 className="w-5 h-5 text-gray-400" />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <h4 className="font-bold text-gray-900 text-sm leading-snug line-clamp-1">{item.name}</h4>
+                  <p className="text-xs text-gray-500 line-clamp-2 mt-0.5">{item.description || 'No detailed specifications recorded.'}</p>
+                </div>
+              </div>
 
               {/* Metadata grid */}
               <div className="grid grid-cols-2 gap-2 text-[11px] bg-gray-50 p-2.5 rounded-md border border-gray-100 mb-3">
@@ -2972,8 +2985,21 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                                       )}
                                     </td>
                                     <td className="p-2 border border-gray-200">
-                                      <div className="font-semibold text-gray-900">{item.name}</div>
-                                      {item.description && <div className="text-[11px] text-gray-500 line-clamp-1">{item.description}</div>}
+                                      <div className="flex items-center gap-2.5">
+                                        {item.imageUrl ? (
+                                          <div className="w-8 h-8 rounded-md border border-gray-200 bg-white overflow-hidden flex-shrink-0 shadow-2xs">
+                                            <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
+                                          </div>
+                                        ) : (
+                                          <div className="w-8 h-8 rounded-md border border-gray-200 bg-gray-50 flex items-center justify-center flex-shrink-0 text-gray-400">
+                                            <Building2 className="w-4 h-4 text-gray-400" />
+                                          </div>
+                                        )}
+                                        <div className="min-w-0 flex-1">
+                                          <div className="font-semibold text-gray-900">{item.name}</div>
+                                          {item.description && <div className="text-[11px] text-gray-500 line-clamp-1">{item.description}</div>}
+                                        </div>
+                                      </div>
                                     </td>
                                     <td className="p-2 border border-gray-200 text-gray-600">{item.category}</td>
                                     <td className="p-2 border border-gray-200 text-center font-bold">{item.quantity} {item.unit}</td>
@@ -3036,8 +3062,21 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                                 )}
                               </td>
                               <td className="p-2 border border-gray-200">
-                                <div className="font-semibold text-gray-900">{item.name}</div>
-                                {item.description && <div className="text-[11px] text-gray-500 line-clamp-1">{item.description}</div>}
+                                <div className="flex items-center gap-2.5">
+                                  {item.imageUrl ? (
+                                    <div className="w-8 h-8 rounded-md border border-gray-200 bg-white overflow-hidden flex-shrink-0 shadow-2xs">
+                                      <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
+                                    </div>
+                                  ) : (
+                                    <div className="w-8 h-8 rounded-md border border-gray-200 bg-gray-50 flex items-center justify-center flex-shrink-0 text-gray-400">
+                                      <Building2 className="w-4 h-4 text-gray-400" />
+                                    </div>
+                                  )}
+                                  <div className="min-w-0 flex-1">
+                                    <div className="font-semibold text-gray-900">{item.name}</div>
+                                    {item.description && <div className="text-[11px] text-gray-500 line-clamp-1">{item.description}</div>}
+                                  </div>
+                                </div>
                               </td>
                               <td className="p-2 border border-gray-200 text-gray-600">{item.category}</td>
                               <td className="p-2 border border-gray-200 text-center font-bold">{item.quantity} {item.unit}</td>
