@@ -60,16 +60,28 @@ export function extractDDownloadCode(input: string): string {
 }
 
 /**
- * Fetch DDownload account info using proxy /api/ddownload
+ * Check if DDownload is configured on the backend server or locally
+ */
+export async function checkDDownloadConfigStatus(): Promise<{ configured: boolean; message?: string }> {
+  try {
+    const res = await fetch('/api/ddownload?action=config-status');
+    const json = await res.json();
+    return { configured: Boolean(json.configured), message: json.message };
+  } catch {
+    return { configured: false };
+  }
+}
+
+/**
+ * Fetch DDownload account info using proxy /api/ddownload.
+ * Relies on Vercel environment variable (DDOWNLOAD_API_KEY) if no client key is provided.
  */
 export async function getDDownloadAccountInfo(apiKey?: string): Promise<{ success: boolean; data?: DDownloadAccountInfo; error?: string }> {
   const key = apiKey?.trim() || getStoredDDownloadApiKey();
-  if (!key) {
-    return { success: false, error: 'No DDownload API key provided.' };
-  }
+  const queryParam = key ? `&key=${encodeURIComponent(key)}` : '';
 
   try {
-    const res = await fetch(`/api/ddownload?action=account-info&key=${encodeURIComponent(key)}`);
+    const res = await fetch(`/api/ddownload?action=account-info${queryParam}`);
     const json = await res.json();
     if (!res.ok || !json.success) {
       return { success: false, error: json.error || 'Failed to connect to DDownload API.' };
@@ -93,8 +105,10 @@ export async function getDDownloadFileInfo(fileCode: string, apiKey?: string): P
     return { success: false, error: 'Invalid file code or URL.' };
   }
 
+  const queryParam = key ? `&key=${encodeURIComponent(key)}` : '';
+
   try {
-    const res = await fetch(`/api/ddownload?action=file-info&file_code=${encodeURIComponent(cleanCode)}&key=${encodeURIComponent(key)}`);
+    const res = await fetch(`/api/ddownload?action=file-info&file_code=${encodeURIComponent(cleanCode)}${queryParam}`);
     const json = await res.json();
     if (!res.ok || !json.success) {
       return { success: false, error: json.error || 'Failed to inspect file on DDownload.' };
@@ -109,7 +123,8 @@ export async function getDDownloadFileInfo(fileCode: string, apiKey?: string): P
 }
 
 /**
- * Upload a laboratory equipment document directly to DDownload via proxy
+ * Upload a laboratory equipment document directly to DDownload via proxy.
+ * Relies on Vercel environment variable (DDOWNLOAD_API_KEY) if no key is entered in Settings.
  */
 export async function uploadItemDocumentToDDownload(
   file: File,
@@ -117,17 +132,13 @@ export async function uploadItemDocumentToDDownload(
   apiKey?: string
 ): Promise<{ success: boolean; attachment?: ItemAttachment; error?: string }> {
   const key = apiKey?.trim() || getStoredDDownloadApiKey();
-  if (!key) {
-    return {
-      success: false,
-      error: 'DDownload API key is not configured. Please add your key in Settings > DDownload Cloud Storage.'
-    };
-  }
 
   try {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('key', key);
+    if (key) {
+      formData.append('key', key);
+    }
     formData.append('action', 'upload');
 
     const res = await fetch('/api/ddownload', {
@@ -139,7 +150,7 @@ export async function uploadItemDocumentToDDownload(
     if (!res.ok || !json.success || !json.file) {
       return {
         success: false,
-        error: json.error || 'Upload failed. Please check your DDownload API key and quota.'
+        error: json.error || 'Upload failed. Please ensure DDOWNLOAD_API_KEY is configured in your Vercel deployment.'
       };
     }
 
@@ -164,7 +175,7 @@ export async function uploadItemDocumentToDDownload(
 
 /**
  * Compress an image file to a lightweight data URL for responsive, zero-lag local rendering
- * and upload the full master file to DDownload cloud storage.
+ * and upload the full master file to DDownload cloud storage via proxy (using server or client key).
  */
 export async function uploadItemPictureWithDDownload(
   file: File,
@@ -222,18 +233,9 @@ export async function uploadItemPictureWithDDownload(
     };
   }
 
-  // Step 2: Upload original image to DDownload
-  const key = apiKey?.trim() || getStoredDDownloadApiKey();
-  if (!key) {
-    return {
-      success: true,
-      imageUrl: optimizedDataUrl,
-      warning: 'Picture saved locally. To backup to DDownload cloud, add your DDownload API key in Settings.'
-    };
-  }
-
+  // Step 2: Upload original image to DDownload via server proxy
   try {
-    const uploadRes = await uploadItemDocumentToDDownload(file, 'Other', key);
+    const uploadRes = await uploadItemDocumentToDDownload(file, 'Other', apiKey);
     if (uploadRes.success && uploadRes.attachment) {
       return {
         success: true,

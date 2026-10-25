@@ -144,9 +144,9 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
   const [ddownloadSuccess, setDdownloadSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    const key = ddownloadKey.trim();
-    if (key && activeTab === 'automation') {
-      getDDownloadAccountInfo(key).then(res => {
+    if (activeTab === 'automation') {
+      const key = ddownloadKey.trim();
+      getDDownloadAccountInfo(key || undefined).then(res => {
         if (res.success && res.data) {
           setDdownloadAccount(res.data);
         }
@@ -167,24 +167,24 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
     let raw = ddownloadKey.trim();
     const match = raw.match(/[?&]key=([a-zA-Z0-9]+)/i);
     const key = match && match[1] ? match[1] : raw;
-    setDdownloadKey(key);
+    if (key !== ddownloadKey) setDdownloadKey(key);
 
-    if (!key) {
-      setDdownloadError('Please enter a DDownload API key first.');
-      return;
-    }
     setIsTestingDDownload(true);
     setDdownloadError(null);
     setDdownloadSuccess(null);
     try {
-      const res = await getDDownloadAccountInfo(key);
+      const res = await getDDownloadAccountInfo(key || undefined);
       if (!res.success || !res.data) {
         throw new Error(res.error || 'Failed to authenticate with DDownload');
       }
       setDdownloadAccount(res.data);
-      setDdownloadSuccess('DDownload API Key verified successfully! Account is active.');
-      setFormData(prev => ({ ...prev, ddownloadApiKey: key }));
-      setStoredDDownloadApiKey(key);
+      if (key) {
+        setDdownloadSuccess('DDownload API Key verified successfully! Account is active.');
+        setFormData(prev => ({ ...prev, ddownloadApiKey: key }));
+        setStoredDDownloadApiKey(key);
+      } else {
+        setDdownloadSuccess('Verified! Active connection established via Vercel server environment variable (DDOWNLOAD_API_KEY).');
+      }
     } catch (err: any) {
       setDdownloadError(err.message || 'DDownload verification failed.');
       setDdownloadAccount(null);
@@ -910,11 +910,11 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
                                         <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${
                                             ddownloadAccount ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-gray-100 text-gray-600'
                                         }`}>
-                                            {ddownloadAccount ? 'Connected' : 'External Host'}
+                                            {ddownloadAccount ? (ddownloadKey.trim() ? 'Connected (Settings Override)' : 'Connected (Vercel Server Env)') : 'Not Connected'}
                                         </span>
                                     </h4>
                                     <p className="text-xs text-gray-500">
-                                        Cloud storage provider for equipment manuals, Material Safety Data Sheets (MSDS), calibration records, and spec sheets.
+                                        Cloud storage provider for equipment photos, manuals, Material Safety Data Sheets (MSDS), and documents.
                                     </p>
                                 </div>
                             </div>
@@ -946,7 +946,7 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
                         {/* API Key Input */}
                         <div className="space-y-2">
                             <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
-                                DDownload API Key
+                                DDownload API Key (Optional Override)
                             </label>
                             <div className="relative">
                                 <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -954,7 +954,7 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
                                     type={showDdownloadKey ? 'text' : 'password'}
                                     value={ddownloadKey}
                                     onChange={handleDDownloadKeyChange}
-                                    placeholder="Enter your DDownload API key"
+                                    placeholder="Configured in Vercel deployment (optional local override)"
                                     className="w-full pl-10 pr-24 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none font-mono"
                                 />
                                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
@@ -968,9 +968,7 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
                                 </div>
                             </div>
                             <p className="text-[11px] text-gray-500 leading-relaxed">
-                                Enter your DDownload API key (e.g. <span className="font-mono text-gray-700 font-bold">507988y2akd8lwsiu54m5e</span>). If you copy the full URL from the DDownload dashboard, the key is automatically extracted for you.
-                                <br />
-                                <span className="text-blue-600 font-semibold">Tip:</span> If DDownload responds with <span className="font-mono text-red-600 font-bold">Wrong auth</span>, click the blue <span className="font-semibold text-gray-800">"Regenerate Key"</span> button on your DDownload dashboard and ensure your account email is confirmed.
+                                <span className="text-emerald-700 font-bold">Vercel Deployment:</span> The system automatically uses <span className="font-mono font-bold text-gray-700">DDOWNLOAD_API_KEY</span> from your Vercel project environment variables. You do not need to fill this in unless you wish to temporarily test another key.
                             </p>
                         </div>
 
@@ -1003,7 +1001,7 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
                             <button
                                 type="button"
                                 onClick={handleTestDDownload}
-                                disabled={isTestingDDownload || !ddownloadKey.trim()}
+                                disabled={isTestingDDownload}
                                 className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-sm"
                             >
                                 {isTestingDDownload ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cloud className="w-4 h-4" />}

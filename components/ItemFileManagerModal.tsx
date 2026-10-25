@@ -117,13 +117,11 @@ export const ItemFileManagerModal: React.FC<ItemFileManagerModalProps> = ({
       let fileName = linkCustomName.trim();
       let fileSize = 0;
 
-      // Try fetching metadata from DDownload
-      if (effectiveApiKey) {
-        const infoRes = await getDDownloadFileInfo(cleanCode, effectiveApiKey);
-        if (infoRes.success && infoRes.data) {
-          fileName = fileName || infoRes.data.file_name || `ddownload_${cleanCode}`;
-          fileSize = Number(infoRes.data.file_size) || 0;
-        }
+      // Try fetching metadata from DDownload via serverless proxy
+      const infoRes = await getDDownloadFileInfo(cleanCode, effectiveApiKey || undefined);
+      if (infoRes.success && infoRes.data) {
+        fileName = fileName || infoRes.data.file_name || `ddownload_${cleanCode}`;
+        fileSize = Number(infoRes.data.file_size) || 0;
       }
 
       if (!fileName) {
@@ -229,20 +227,6 @@ export const ItemFileManagerModal: React.FC<ItemFileManagerModalProps> = ({
               <button type="button" onClick={() => setUploadSuccess(null)} className="text-emerald-500 hover:text-emerald-700">
                 <X className="w-4 h-4" />
               </button>
-            </div>
-          )}
-
-          {/* DDownload API Key Warning if not configured */}
-          {!effectiveApiKey && (
-            <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="font-bold">DDownload API Key Not Detected</p>
-                <p>
-                  To upload files directly to your DDownload account, please configure your API key in <span className="font-semibold">Settings &gt; SMTP & Sync Automation &gt; DDownload Cloud Service</span>.
-                  You can also paste existing DDownload URLs directly below.
-                </p>
-              </div>
             </div>
           )}
 

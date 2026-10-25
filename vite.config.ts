@@ -62,6 +62,12 @@ const smtpDevelopmentApi = (env: Record<string, string>) => ({
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
+  if (env.DDOWNLOAD_API_KEY && !process.env.DDOWNLOAD_API_KEY) {
+    process.env.DDOWNLOAD_API_KEY = env.DDOWNLOAD_API_KEY;
+  }
+  if (env.VITE_DDOWNLOAD_API_KEY && !process.env.VITE_DDOWNLOAD_API_KEY) {
+    process.env.VITE_DDOWNLOAD_API_KEY = env.VITE_DDOWNLOAD_API_KEY;
+  }
 
   return {
     plugins: [react(), smtpDevelopmentApi(env)],

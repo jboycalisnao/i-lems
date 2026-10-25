@@ -50,7 +50,7 @@ function sendJson(res, status, data) {
 
 async function getAccountInfo(apiKey) {
   if (!apiKey) {
-    return { success: false, error: 'DDownload API key is required. Please configure it in Settings.' };
+    return { success: false, error: 'DDownload API key is not configured in server environment variables or Settings.' };
   }
   try {
     const url = `${DDOWNLOAD_API_BASE}/account/info?key=${encodeURIComponent(apiKey)}`;
@@ -60,7 +60,7 @@ async function getAccountInfo(apiKey) {
       if (data.msg === 'Wrong auth' || data.status === 403) {
         return {
           success: false,
-          error: 'DDownload returned "Wrong auth" (Status 403). Please click the blue "Regenerate Key" button on your DDownload account dashboard and confirm your account email.'
+          error: 'DDownload returned "Wrong auth" (Status 403). Please verify your DDOWNLOAD_API_KEY in Vercel environment variables or regenerate key on DDownload.'
         };
       }
       return { success: false, error: data.msg || `DDownload API response: status ${data.status}` };
@@ -208,6 +208,16 @@ async function handler(req, res) {
         return sendJson(res, 200, { success: true, message: 'DDownload API Proxy is active.' });
       }
 
+      if (action === 'config-status' || action === 'status') {
+        const hasKey = Boolean(key);
+        return sendJson(res, 200, {
+          success: true,
+          configured: hasKey,
+          source: hasKey ? (cleanValue(query.key) ? 'client' : 'environment') : 'none',
+          message: hasKey ? 'DDownload API key is configured and active' : 'DDownload API key is not configured'
+        });
+      }
+
       if (action === 'account-info') {
         const infoRes = await getAccountInfo(key);
         return sendJson(res, 200, infoRes);
@@ -243,8 +253,8 @@ async function handler(req, res) {
         });
 
         const formData = await webReq.formData();
-        const formKey = formData.get('key');
-        if (formKey) key = cleanValue(formKey);
+        const rawFormKey = cleanValue(formData.get('key'));
+        if (rawFormKey) key = rawFormKey;
         const formAction = formData.get('action');
         if (formAction) action = String(formAction);
 
