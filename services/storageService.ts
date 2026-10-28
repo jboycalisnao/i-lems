@@ -4,6 +4,7 @@ import { supabase } from '../supabaseClient';
 import { SYSTEM_NAME } from '../branding';
 import { LNHS_ACTUAL_LABORATORY_ITEMS } from '../data/lnhsActualEquipment';
 import { rememberLocation } from './locationService';
+import { deleteDDownloadFile } from './ddownloadService';
 
 const APP_ASSETS_BUCKET = 'app-assets';
 const APP_LOGO_PATH = 'branding/app-logo';
@@ -68,6 +69,14 @@ const mapInventoryItem = (data: any): InventoryItem => {
         } catch {}
     }
 
+    let boxes = parseArray<any>(readField(data, 'boxes'));
+    if ((!boxes || boxes.length === 0) && data.id && typeof window !== 'undefined') {
+        try {
+            const cachedBoxes = localStorage.getItem('ilems_item_boxes_' + data.id);
+            if (cachedBoxes) boxes = JSON.parse(cachedBoxes);
+        } catch {}
+    }
+
     return {
         id: data.id,
         name: data.name,
@@ -85,7 +94,7 @@ const mapInventoryItem = (data: any): InventoryItem => {
         maxBorrowable: readField(data, 'maxBorrowable', 'max_borrowable', 'maxborrowable') == null
             ? null
             : toNumber(readField(data, 'maxBorrowable', 'max_borrowable', 'maxborrowable')),
-        boxes: parseArray(readField(data, 'boxes')),
+        boxes: boxes || [],
         attachments: attachments || [],
         imageUrl: readField(data, 'imageUrl', 'image_url', 'imageurl') || undefined,
         imageFileCode: readField(data, 'imageFileCode', 'image_file_code', 'imagefilecode') || undefined,
@@ -514,12 +523,48 @@ export const saveItem = async (item: InventoryItem): Promise<{ success: boolean;
         image_ddownload_url: item.imageDDownloadUrl || null
     };
 
+    if (typeof window !== 'undefined') {
+        try {
+            if (item.attachments && item.attachments.length > 0) {
+                localStorage.setItem('ilems_item_attachments_' + item.id, JSON.stringify(item.attachments));
+            }
+            if (item.boxes && item.boxes.length > 0) {
+                localStorage.setItem('ilems_item_boxes_' + item.id, JSON.stringify(item.boxes));
+            }
+        } catch {}
+    }
+
     let error: any = null;
     const res = await supabase.from('inventory_items').upsert(payload);
-    if (res.error && (res.error.message?.includes('attachments') || res.error.message?.includes('image') || res.error.message?.includes('schema cache'))) {
-        // Fallback: If table does not yet have 'attachments' or 'image' columns, save baseline fields to DB while retaining localStorage cache
-        const { attachments: _, image_url: __, image_file_code: ___, image_ddownload_url: ____, ...fallbackPayload } = payload;
-        const retryRes = await supabase.from('inventory_items').upsert(fallbackPayload);
+    if (res.error && (res.error.message?.includes('schema cache') || res.error.message?.includes('column'))) {
+        // Fallback: If table does not yet have 'boxes', 'attachments', or 'image' columns in Supabase schema cache
+        const fallbackPayload: Record<string, any> = { ...payload };
+
+        // Strip the specific missing column reported by Supabase PostgREST
+        const missingMatch = res.error.message.match(/Could not find the '([^']+)' column/i);
+        if (missingMatch && missingMatch[1]) {
+            delete fallbackPayload[missingMatch[1]];
+        }
+
+        // Proactively strip optional schema extensions so the item always saves successfully
+        delete fallbackPayload.boxes;
+        delete fallbackPayload.attachments;
+        delete fallbackPayload.image_url;
+        delete fallbackPayload.image_file_code;
+        delete fallbackPayload.image_ddownload_url;
+
+        let retryRes = await supabase.from('inventory_items').upsert(fallbackPayload);
+        if (retryRes.error && retryRes.error.message?.includes('schema cache')) {
+            const secondMatch = retryRes.error.message.match(/Could not find the '([^']+)' column/i);
+            if (secondMatch && secondMatch[1]) {
+                delete fallbackPayload[secondMatch[1]];
+            }
+            delete fallbackPayload.maxBorrowable;
+            delete fallbackPayload.isConsumable;
+            delete fallbackPayload.safetyNotes;
+            delete fallbackPayload.shortId;
+            retryRes = await supabase.from('inventory_items').upsert(fallbackPayload);
+        }
         error = retryRes.error;
     } else {
         error = res.error;
@@ -554,9 +599,29 @@ export const saveItem = async (item: InventoryItem): Promise<{ success: boolean;
 };
 
 export const deleteItem = async (id: string): Promise<boolean> => {
+    // Find item to clean up its cloud files from DDownload if any exist
+    const cachedItem = memoryInventorySnapshot?.items?.find(i => i.id === id) || loadLocalInventoryItems().find(i => i.id === id);
+    if (cachedItem) {
+        if (cachedItem.imageFileCode) {
+            deleteDDownloadFile(cachedItem.imageFileCode).catch(err => {
+                console.warn('DDownload item image cleanup warning:', err);
+            });
+        }
+        if (Array.isArray(cachedItem.attachments)) {
+            for (const att of cachedItem.attachments) {
+                if (att.fileCode) {
+                    deleteDDownloadFile(att.fileCode).catch(err => {
+                        console.warn('DDownload attachment cleanup warning:', err);
+                    });
+                }
+            }
+        }
+    }
+
     if (typeof window !== 'undefined') {
         try {
             localStorage.removeItem('ilems_item_attachments_' + id);
+            localStorage.removeItem('ilems_item_boxes_' + id);
         } catch {}
     }
     const { error } = await supabase.from('inventory_items').delete().eq('id', id);

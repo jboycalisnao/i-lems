@@ -10,6 +10,7 @@ import {
 import { 
   uploadItemDocumentToDDownload, 
   uploadItemPictureWithDDownload, 
+  deleteDDownloadFile,
   formatBytes, 
   getStoredDDownloadApiKey 
 } from '../services/ddownloadService';
@@ -132,7 +133,13 @@ const InventoryForm: React.FC<InventoryFormProps> = ({ initialData, categories, 
     }
   };
 
-  const handleRemoveDoc = (id: string) => {
+  const handleRemoveDoc = async (id: string) => {
+    const target = attachments.find(a => a.id === id);
+    if (target?.fileCode) {
+      deleteDDownloadFile(target.fileCode).catch(err => {
+        console.warn('DDownload file removal warning:', err);
+      });
+    }
     setAttachments(prev => prev.filter(a => a.id !== id));
   };
 
@@ -142,9 +149,21 @@ const InventoryForm: React.FC<InventoryFormProps> = ({ initialData, categories, 
     setTimeout(() => setCopiedDocId(null), 2000);
   };
 
+  const handleRemovePicture = async () => {
+    if (formData.imageFileCode) {
+      deleteDDownloadFile(formData.imageFileCode).catch(err => {
+        console.warn('DDownload image removal warning:', err);
+      });
+    }
+    setFormData(prev => ({ ...prev, imageUrl: '', imageFileCode: '', imageDDownloadUrl: '' }));
+    setImageUploadStatus(null);
+  };
+
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    const oldFileCode = formData.imageFileCode;
 
     setIsUploadingImage(true);
     setImageUploadStatus(null);
@@ -157,6 +176,14 @@ const InventoryForm: React.FC<InventoryFormProps> = ({ initialData, categories, 
           imageFileCode: res.fileCode || prev.imageFileCode,
           imageDDownloadUrl: res.downloadUrl || prev.imageDDownloadUrl
         }));
+
+        // Clean up previously replaced picture on DDownload
+        if (oldFileCode && res.fileCode && oldFileCode !== res.fileCode) {
+          deleteDDownloadFile(oldFileCode).catch(err => {
+            console.warn('DDownload replaced image cleanup warning:', err);
+          });
+        }
+
         if (res.fileCode) {
           setImageUploadStatus(`Backed up to DDownload (${res.fileCode})`);
         } else if (res.warning) {
@@ -273,10 +300,7 @@ const InventoryForm: React.FC<InventoryFormProps> = ({ initialData, categories, 
                   {formData.imageUrl && (
                     <button
                       type="button"
-                      onClick={() => {
-                        setFormData(prev => ({ ...prev, imageUrl: '', imageFileCode: '', imageDDownloadUrl: '' }));
-                        setImageUploadStatus(null);
-                      }}
+                      onClick={handleRemovePicture}
                       className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-gray-300 hover:bg-red-50 hover:text-red-600 text-gray-600 rounded-md text-xs font-medium transition-colors"
                     >
                       <Trash2 className="w-3.5 h-3.5" />

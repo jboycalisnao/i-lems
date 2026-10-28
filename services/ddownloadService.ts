@@ -258,3 +258,35 @@ export async function uploadItemPictureWithDDownload(
   }
 }
 
+/**
+ * Permanently delete a file from DDownload cloud storage via proxy
+ */
+export async function deleteDDownloadFile(
+  fileCodeOrUrl: string,
+  apiKey?: string
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  const cleanCode = extractDDownloadCode(fileCodeOrUrl);
+  if (!cleanCode) {
+    return { success: false, error: 'Invalid file code or URL.' };
+  }
+
+  const key = apiKey?.trim() || getStoredDDownloadApiKey();
+  const queryParam = key ? `&key=${encodeURIComponent(key)}` : '';
+
+  try {
+    const res = await fetch(`/api/ddownload?action=delete&file_code=${encodeURIComponent(cleanCode)}${queryParam}`, {
+      method: 'GET'
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      return { success: false, error: json.error || 'Failed to delete file from DDownload.' };
+    }
+    return { success: true, message: json.message || 'File permanently deleted from DDownload.' };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Network error deleting file from DDownload.'
+    };
+  }
+}
+

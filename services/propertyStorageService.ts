@@ -2,6 +2,7 @@ import { PropertyItem, PropertyStats, PropertyCondition, PropertyInventoryType }
 import { supabase } from '../supabaseClient';
 import { LNHS_ACTUAL_PROPERTY_ITEMS } from '../data/lnhsActualEquipment';
 import { rememberLocation } from './locationService';
+import { deleteDDownloadFile } from './ddownloadService';
 
 const LOCAL_STORAGE_KEY = 'scilab_property_items';
 
@@ -534,6 +535,27 @@ export const savePropertyItemsBulk = async (newItems: PropertyItem[]): Promise<{
  * Delete a Property Item from Cloud (Supabase)
  */
 export const deletePropertyItem = async (id: string): Promise<{ success: boolean; message?: string }> => {
+  const current = loadLocalProperties();
+  const targetItem = current.find(p => p.id === id);
+
+  // Clean up any uploaded DDownload files
+  if (targetItem) {
+    if (targetItem.imageFileCode) {
+      deleteDDownloadFile(targetItem.imageFileCode).catch(err => {
+        console.warn('DDownload property image cleanup warning:', err);
+      });
+    }
+    if (Array.isArray((targetItem as any).attachments)) {
+      for (const att of (targetItem as any).attachments) {
+        if (att?.fileCode) {
+          deleteDDownloadFile(att.fileCode).catch(err => {
+            console.warn('DDownload property attachment cleanup warning:', err);
+          });
+        }
+      }
+    }
+  }
+
   if (supabase && typeof supabase.from === 'function') {
     try {
       const { error } = await supabase.from('property_items').delete().eq('id', id);
@@ -547,7 +569,6 @@ export const deletePropertyItem = async (id: string): Promise<{ success: boolean
     }
   }
 
-  const current = loadLocalProperties();
   const filtered = current.filter(p => p.id !== id);
   saveLocalProperties(filtered);
   memoryCachedPropertyItems = filtered;
@@ -562,6 +583,29 @@ export const deletePropertyItem = async (id: string): Promise<{ success: boolean
 export const deletePropertyItemsBulk = async (ids: string[]): Promise<{ success: boolean; message?: string }> => {
   if (ids.length === 0) return { success: true };
 
+  const idSet = new Set(ids);
+  const current = loadLocalProperties();
+
+  // Clean up any uploaded DDownload files for all deleted items
+  for (const item of current) {
+    if (idSet.has(item.id)) {
+      if (item.imageFileCode) {
+        deleteDDownloadFile(item.imageFileCode).catch(err => {
+          console.warn('DDownload bulk property image cleanup warning:', err);
+        });
+      }
+      if (Array.isArray((item as any).attachments)) {
+        for (const att of (item as any).attachments) {
+          if (att?.fileCode) {
+            deleteDDownloadFile(att.fileCode).catch(err => {
+              console.warn('DDownload bulk property attachment cleanup warning:', err);
+            });
+          }
+        }
+      }
+    }
+  }
+
   if (supabase && typeof supabase.from === 'function') {
     try {
       const { error } = await supabase.from('property_items').delete().in('id', ids);
@@ -575,8 +619,6 @@ export const deletePropertyItemsBulk = async (ids: string[]): Promise<{ success:
     }
   }
 
-  const idSet = new Set(ids);
-  const current = loadLocalProperties();
   const filtered = current.filter(p => !idSet.has(p.id));
   saveLocalProperties(filtered);
   memoryCachedPropertyItems = filtered;

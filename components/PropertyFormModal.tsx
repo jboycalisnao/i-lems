@@ -15,7 +15,7 @@ import {
   CheckSquare, ChevronDown, ChevronUp, RefreshCw, Camera, Upload, Trash2, 
   Cloud, ExternalLink, Loader2, Check 
 } from 'lucide-react';
-import { uploadItemPictureWithDDownload } from '../services/ddownloadService';
+import { uploadItemPictureWithDDownload, deleteDDownloadFile } from '../services/ddownloadService';
 import LocationSearchSelect from './LocationSearchSelect';
 import PropertyNameSearchSelect from './PropertyNameSearchSelect';
 
@@ -96,9 +96,21 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
   const [imageUploadStatus, setImageUploadStatus] = useState<string | null>(null);
   const imageInputRef = React.useRef<HTMLInputElement>(null);
 
+  const handleRemovePicture = async () => {
+    if (formData.imageFileCode) {
+      deleteDDownloadFile(formData.imageFileCode).catch(err => {
+        console.warn('DDownload asset image removal warning:', err);
+      });
+    }
+    setFormData(prev => ({ ...prev, imageUrl: '', imageFileCode: '', imageDDownloadUrl: '' }));
+    setImageUploadStatus(null);
+  };
+
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    const oldFileCode = formData.imageFileCode;
 
     setIsUploadingImage(true);
     setImageUploadStatus(null);
@@ -111,6 +123,14 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
           imageFileCode: res.fileCode || prev.imageFileCode,
           imageDDownloadUrl: res.downloadUrl || prev.imageDDownloadUrl
         }));
+
+        // Clean up previously replaced picture on DDownload
+        if (oldFileCode && res.fileCode && oldFileCode !== res.fileCode) {
+          deleteDDownloadFile(oldFileCode).catch(err => {
+            console.warn('DDownload replaced asset image cleanup warning:', err);
+          });
+        }
+
         if (res.fileCode) {
           setImageUploadStatus(`Backed up to DDownload (${res.fileCode})`);
         } else if (res.warning) {
@@ -426,10 +446,7 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
                 {formData.imageUrl && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setFormData(prev => ({ ...prev, imageUrl: '', imageFileCode: '', imageDDownloadUrl: '' }));
-                      setImageUploadStatus(null);
-                    }}
+                    onClick={handleRemovePicture}
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-gray-300 hover:bg-red-50 hover:text-red-600 text-gray-600 rounded-md text-xs font-medium transition-colors"
                   >
                     <Trash2 className="w-3.5 h-3.5" />

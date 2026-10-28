@@ -115,6 +115,48 @@ async function getFileInfo(apiKey, fileCode) {
   }
 }
 
+function extractFileCode(input) {
+  if (!input) return '';
+  const str = String(input).trim();
+  const match = str.match(/(?:ddownload\.com|ddl\.to)\/([a-zA-Z0-9]+)/i);
+  if (match && match[1]) return match[1];
+  return str.replace(/[^a-zA-Z0-9]/g, '');
+}
+
+async function deleteFileFromDDownload(apiKey, rawCode) {
+  if (!apiKey) {
+    return { success: false, error: 'DDownload API key is required to delete files.' };
+  }
+  const fileCode = extractFileCode(rawCode);
+  if (!fileCode) {
+    return { success: false, error: 'Valid DDownload file code is required for deletion.' };
+  }
+
+  try {
+    const url = `${DDOWNLOAD_API_BASE}/file/delete?key=${encodeURIComponent(apiKey)}&file_code=${encodeURIComponent(fileCode)}`;
+    const resp = await fetch(url, { headers: DEFAULT_HEADERS });
+    const data = await resp.json().catch(() => null);
+
+    if (data && (data.status === 200 || data.msg === 'OK' || data.result === 'true' || data.result === true)) {
+      return { success: true, message: 'File deleted from DDownload successfully.' };
+    }
+
+    if (data && (data.msg === 'File not found' || data.msg === 'file not found' || data.msg === 'Deleted' || data.status === 404)) {
+      return { success: true, message: 'File is already removed from DDownload.' };
+    }
+
+    return {
+      success: false,
+      error: data?.msg || `Failed to delete file from DDownload (status ${data?.status || resp.status})`
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Network error communicating with DDownload deletion API.'
+    };
+  }
+}
+
 async function uploadFileToDDownload(apiKey, fileBlob, fileName) {
   if (!apiKey) {
     return { success: false, error: 'DDownload API key is required for upload.' };
@@ -234,6 +276,12 @@ async function handler(req, res) {
         return sendJson(res, 200, infoRes);
       }
 
+      if (action === 'delete' || action === 'file-delete' || action === 'remove') {
+        const fileCode = query.file_code || query.fileCode || query.code;
+        const delRes = await deleteFileFromDDownload(key, fileCode);
+        return sendJson(res, 200, delRes);
+      }
+
       return sendJson(res, 200, { success: false, error: `Unknown GET action: ${action}` });
     }
 
@@ -298,6 +346,12 @@ async function handler(req, res) {
         return sendJson(res, 200, serverRes);
       }
 
+      if (action === 'delete' || action === 'file-delete' || action === 'remove') {
+        const fileCode = body.file_code || body.fileCode || body.code || query.file_code || query.fileCode;
+        const delRes = await deleteFileFromDDownload(key, fileCode);
+        return sendJson(res, 200, delRes);
+      }
+
       return sendJson(res, 200, { success: false, error: `Unsupported POST action: ${action}` });
     }
 
@@ -317,3 +371,5 @@ module.exports.getAccountInfo = getAccountInfo;
 module.exports.getUploadServer = getUploadServer;
 module.exports.getFileInfo = getFileInfo;
 module.exports.uploadFileToDDownload = uploadFileToDDownload;
+module.exports.deleteFileFromDDownload = deleteFileFromDDownload;
+module.exports.extractFileCode = extractFileCode;

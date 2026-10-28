@@ -10,5 +10,6 @@ export const getAccountInfo = api.getAccountInfo;
 export const getUploadServer = api.getUploadServer;
 export const getFileInfo = api.getFileInfo;
 export const uploadFileToDDownload = api.uploadFileToDDownload;
+export const deleteFileFromDDownload = api.deleteFileFromDDownload;
 
 export default api;

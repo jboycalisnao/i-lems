@@ -9,6 +9,7 @@ import {
 import { 
   uploadItemDocumentToDDownload, 
   getDDownloadFileInfo, 
+  deleteDDownloadFile,
   extractDDownloadCode, 
   formatBytes,
   getStoredDDownloadApiKey
@@ -54,6 +55,7 @@ export const ItemFileManagerModal: React.FC<ItemFileManagerModalProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<ItemAttachment['category']>('Manual');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Link existing DDownload file mode
   const [linkInput, setLinkInput] = useState('');
@@ -155,16 +157,37 @@ export const ItemFileManagerModal: React.FC<ItemFileManagerModalProps> = ({
   };
 
   const handleRemoveAttachment = async (attachmentId: string) => {
-    if (!window.confirm('Are you sure you want to detach this file from this equipment? The file will remain on DDownload.')) {
+    const target = attachments.find(a => a.id === attachmentId);
+    if (!target) return;
+
+    if (!window.confirm(`Are you sure you want to permanently delete "${target.name}"? This file will be completely deleted from DDownload cloud storage.`)) {
       return;
     }
 
-    const updated = attachments.filter(a => a.id !== attachmentId);
-    setAttachments(updated);
-    setUploadSuccess('File detached.');
+    setDeletingId(attachmentId);
+    setUploadError(null);
+    setUploadSuccess(null);
 
-    const updatedItem: InventoryItem = { ...item, attachments: updated };
-    await onSaveAttachments(updatedItem);
+    try {
+      const codeToDelete = target.fileCode || extractDDownloadCode(target.downloadUrl);
+      if (codeToDelete) {
+        const delRes = await deleteDDownloadFile(codeToDelete, effectiveApiKey);
+        if (!delRes.success) {
+          console.warn('DDownload deletion response:', delRes.error);
+        }
+      }
+
+      const updated = attachments.filter(a => a.id !== attachmentId);
+      setAttachments(updated);
+      setUploadSuccess(`"${target.name}" has been deleted from DDownload and detached from equipment.`);
+
+      const updatedItem: InventoryItem = { ...item, attachments: updated };
+      await onSaveAttachments(updatedItem);
+    } catch (err: any) {
+      setUploadError(err.message || 'Failed to delete file from DDownload.');
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   const modalContent = (
@@ -308,11 +331,16 @@ export const ItemFileManagerModal: React.FC<ItemFileManagerModalProps> = ({
 
                         <button
                           type="button"
+                          disabled={deletingId === file.id}
                           onClick={() => handleRemoveAttachment(file.id)}
-                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors ml-1"
-                          title="Detach file"
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors ml-1 disabled:opacity-50"
+                          title="Delete file permanently from DDownload"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          {deletingId === file.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-red-500" />
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
                         </button>
                       </div>
                     </div>
