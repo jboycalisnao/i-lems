@@ -16,6 +16,7 @@ import {
   Cloud, ExternalLink, Loader2, Check 
 } from 'lucide-react';
 import { uploadItemPictureWithDDownload, deleteDDownloadFile } from '../services/ddownloadService';
+import { toast } from '../context/ToastContext';
 import LocationSearchSelect from './LocationSearchSelect';
 import PropertyNameSearchSelect from './PropertyNameSearchSelect';
 
@@ -139,10 +140,10 @@ export const PropertyFormModal: React.FC<PropertyFormModalProps> = ({
           setImageUploadStatus('Picture updated successfully');
         }
       } else {
-        alert(res.error || 'Failed to process image file.');
+        toast.error(res.error || 'Failed to process image file.', 'Image Error');
       }
     } catch (err: any) {
-      alert(err.message || 'Image upload error.');
+      toast.error(err.message || 'Image upload error.', 'Upload Error');
     } finally {
       setIsUploadingImage(false);
       if (imageInputRef.current) imageInputRef.current.value = '';

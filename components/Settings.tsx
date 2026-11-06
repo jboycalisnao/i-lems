@@ -21,6 +21,7 @@ import {
   getStoredDDownloadApiKey, 
   setStoredDDownloadApiKey 
 } from '../services/ddownloadService';
+import { toast } from '../context/ToastContext';
 
 interface SettingsProps {
   settings: AppSettings;
@@ -282,13 +283,13 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-        alert('Please select an image file.');
+        toast.warning('Please select an image file.', 'Invalid File Type');
         e.target.value = '';
         return;
     }
 
     if (file.size > 5 * 1024 * 1024) {
-        alert('Logo images must be 5 MB or smaller.');
+        toast.warning('Logo images must be 5 MB or smaller.', 'File Too Large');
         e.target.value = '';
         return;
     }
@@ -298,8 +299,9 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
     try {
         const publicUrl = await storage.uploadAppLogo(file);
         setFormData(prev => ({ ...prev, logoUrl: publicUrl }));
+        toast.success('App logo uploaded successfully.', 'Logo Uploaded');
     } catch (error) {
-        alert(error instanceof Error ? `Logo upload failed: ${error.message}` : 'Logo upload failed.');
+        toast.error(error instanceof Error ? `Logo upload failed: ${error.message}` : 'Logo upload failed.', 'Upload Error');
     } finally {
         setIsUploadingLogo(false);
         e.target.value = '';
@@ -316,10 +318,10 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
           });
           const result = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(result.error || 'SMTP verification failed.');
-          alert('Gmail SMTP connection verified successfully.');
+          toast.success('Gmail SMTP connection verified successfully.', 'SMTP Verified');
           await loadSmtpConfig();
       } catch (error) {
-          alert(error instanceof Error ? error.message : 'SMTP connection failed.');
+          toast.error(error instanceof Error ? error.message : 'SMTP connection failed.', 'SMTP Error');
       } finally {
           setIsTestingConnection(false);
       }
@@ -327,7 +329,7 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
 
   const handleSendTestEmail = async () => {
     if (!formData.notificationEmails) {
-        alert("Add a notification recipient to send a test email.");
+        toast.warning("Add a notification recipient to send a test email.", 'Recipient Needed');
         return;
     }
     
@@ -347,9 +349,9 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
             </div>`
         });
         if (!sent) throw new Error('The SMTP server could not send the test email.');
-        alert(`Test email sent to: ${recipients}. Please check your inbox (and spam folder).`);
+        toast.success(`Test email sent to: ${recipients}. Please check your inbox (and spam folder).`, 'Email Sent');
     } catch (e) {
-        alert("Failed to send test email. Verify your Script URL and internet connection.");
+        toast.error("Failed to send test email. Verify your Script URL and internet connection.", 'Send Failed');
     } finally {
         setIsSendingTestEmail(false);
     }
@@ -359,7 +361,7 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
     e.preventDefault();
     if (isUploadingLogo) return;
     if (formData.logoUrl?.startsWith('data:')) {
-        alert('The current logo is stored as legacy base64 data. Upload it again or enter a public image URL before saving.');
+        toast.warning('The current logo is stored as legacy base64 data. Upload it again or enter a public image URL before saving.', 'Legacy Logo Format');
         return;
     }
     setIsSaving(true);
@@ -369,14 +371,19 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
             const success = await onSave(formData);
             if (!success) throw new Error('The database rejected the settings update.');
             setSaved(true);
+            toast.success('System settings saved successfully.', 'Settings Saved');
             setTimeout(() => setSaved(false), 3000);
-        } catch (error: any) { alert("Failed to save settings."); } finally { setIsSaving(false); }
+        } catch (error: any) { 
+            toast.error("Failed to save settings.", 'Save Failed'); 
+        } finally { 
+            setIsSaving(false); 
+        }
     }, 100);
   };
 
   const copyCode = (code: string) => {
     navigator.clipboard.writeText(code);
-    alert("Code copied!");
+    toast.success("Code copied to clipboard!", "Copied");
   };
 
   // --- Category CRUD Handlers ---

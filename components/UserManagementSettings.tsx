@@ -7,6 +7,7 @@ import {
   CheckCircle2, XCircle, Edit2, Trash2, Check, X, AlertCircle, RefreshCw,
   FileCode, Copy, Layers, Eye, EyeOff, Sparkles, Filter, ChevronDown, ChevronUp
 } from 'lucide-react';
+import { toast } from '../context/ToastContext';
 
 interface UserManagementSettingsProps {
   onUsersChange?: () => void;
@@ -205,18 +206,19 @@ export const UserManagementSettings: React.FC<UserManagementSettingsProps> = ({ 
   // Toggle user status directly
   const handleToggleStatus = async (user: AppUser) => {
     if (user.username === 'admin') {
-      alert('The primary system administrator cannot be suspended.');
+      toast.warning('The primary system administrator cannot be suspended.', 'Protected Account');
       return;
     }
     const newStatus = user.status === 'active' ? 'inactive' : 'active';
     await userService.saveUser({ ...user, status: newStatus });
     await loadData();
     onUsersChange?.();
+    toast.success(`User "${user.name || user.username}" status updated to ${newStatus}.`, 'User Updated');
   };
 
   const copyCode = (code: string) => {
     navigator.clipboard.writeText(code);
-    alert('SQL Schema copied to clipboard!');
+    toast.success('SQL Schema copied to clipboard!', 'Copied');
   };
 
   // Available permissions catalog grouped by module

@@ -8,6 +8,7 @@ import PISBatchGeneratorModal from './PISBatchGeneratorModal';
 import CableStickerGeneratorModal from './CableStickerGeneratorModal';
 import QuickPISEncoderModal from './QuickPISEncoderModal';
 import ConfirmModal from './ConfirmModal';
+import { toast } from '../context/ToastContext';
 import { Card } from './ui/Surface';
 import { getCategoryIcon, getCategoryColor } from '../constants';
 import {
@@ -359,8 +360,9 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
       await loadData(false);
       setIsFormOpen(false);
       setEditingItem(undefined);
+      toast.success('Property asset record saved successfully.', 'Property Saved');
     } else {
-      alert(res.message || 'Failed to save property item to cloud database.');
+      toast.error(res.message || 'Failed to save property item to cloud database.', 'Save Failed');
     }
   };
 
@@ -370,8 +372,9 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
       await loadData(false);
       setIsFormOpen(false);
       setEditingItem(undefined);
+      toast.success(`${itemsList.length} property items registered successfully.`, 'Batch Registration');
     } else {
-      alert(res.message || 'Failed to save batch property items.');
+      toast.error(res.message || 'Failed to save batch property items.', 'Batch Save Failed');
     }
   };
 
@@ -383,7 +386,9 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
       onConfirm: async () => {
         const res = await propertyStorage.deletePropertyItem(id);
         if (res && !res.success && res.message) {
-          alert(`Cloud delete notice: ${res.message}`);
+          toast.info(`Cloud delete notice: ${res.message}`, 'Notice');
+        } else {
+          toast.info(`"${name}" has been removed.`, 'Property Deleted');
         }
         await loadData(false);
         setConfirmModal(prev => ({ ...prev, isOpen: false }));
@@ -393,14 +398,17 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
 
   const handleDeleteBulk = () => {
     if (selectedIds.size === 0) return;
+    const count = selectedIds.size;
     setConfirmModal({
       isOpen: true,
       title: 'Delete Selected Properties',
-      message: `Permanently delete ${selectedIds.size} selected property asset records from cloud database?`,
+      message: `Permanently delete ${count} selected property asset records from cloud database?`,
       onConfirm: async () => {
         const res = await propertyStorage.deletePropertyItemsBulk(Array.from(selectedIds));
         if (res && !res.success && res.message) {
-          alert(`Cloud bulk delete notice: ${res.message}`);
+          toast.info(`Cloud bulk delete notice: ${res.message}`, 'Notice');
+        } else {
+          toast.info(`${count} property records removed.`, 'Bulk Deleted');
         }
         setSelectedIds(new Set());
         await loadData(false);

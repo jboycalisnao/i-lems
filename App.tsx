@@ -26,6 +26,7 @@ import { ScannedRecordModal } from './components/ScannedRecordModal';
 import usbScannerService from './services/usbScannerService';
 import { lookupScannedBarcode, ScannedLookupResult } from './services/scannerLookupService';
 import { getUserStatusUpdateTemplate } from './services/emailTemplates';
+import { toast } from './context/ToastContext';
 import { LayoutDashboard, List, Plus, FlaskConical, HandPlatter, Settings as SettingsIcon, LogOut, ScanLine, Inbox, RefreshCw, AlertCircle, Building2, Usb } from 'lucide-react';
 import { HEAD_TITLE, SYSTEM_FULL_NAME, SYSTEM_NAME, SYSTEM_SHORT_NAME } from './branding';
 
@@ -293,8 +294,9 @@ const App: React.FC = () => {
         await refreshData(true).catch(() => {});
         setIsFormOpen(false);
         setEditingItem(undefined);
+        toast.success("Equipment item saved successfully.", "Saved");
     } else {
-        alert("Save failed: " + (result.message || "Network error"));
+        toast.error("Save failed: " + (result.message || "Network error"), "Save Error");
     }
   };
 
@@ -302,6 +304,7 @@ const App: React.FC = () => {
     confirmAction("Delete Equipment", "Permanently remove this equipment record? This action cannot be undone.", async () => {
         await storage.deleteItem(id);
         await refreshData(true).catch(() => {});
+        toast.info("Equipment item deleted.", "Deleted");
     }, true);
   };
 
@@ -312,6 +315,7 @@ const App: React.FC = () => {
         async () => {
             await storage.deleteBorrowRecord(id);
             await refreshData(true).catch(() => {});
+            toast.info("Loan record deleted.", "Deleted");
         },
         true
       );
@@ -326,6 +330,7 @@ const App: React.FC = () => {
                 await storage.deleteBorrowRecord(id);
             }
             await refreshData(true).catch(() => {});
+            toast.info(`${ids.length} loan records deleted.`, "Bulk Delete");
         },
         true
       );
@@ -336,8 +341,9 @@ const App: React.FC = () => {
     if (result.success) {
         await refreshData(true).catch(() => {});
         setIsBorrowModalOpen(false);
+        toast.success(`Loan record created for ${bName}.`, "Item Borrowed");
     } else {
-        alert(result.message || "Failed to save the loan record.");
+        toast.error(result.message || "Failed to save the loan record.", "Loan Error");
     }
   };
 
@@ -365,8 +371,9 @@ const App: React.FC = () => {
           }
           await refreshData(true).catch(() => {});
           setReturnModalState({ isOpen: false });
+          toast.success("Equipment successfully marked as returned.", "Return Completed");
       } else {
-          alert(result.message || "Failed to finalize the return.");
+          toast.error(result.message || "Failed to finalize the return.", "Return Error");
       }
   };
 

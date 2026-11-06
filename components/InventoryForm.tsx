@@ -15,6 +15,7 @@ import {
   getStoredDDownloadApiKey 
 } from '../services/ddownloadService';
 import LocationSearchSelect from './LocationSearchSelect';
+import { toast } from '../context/ToastContext';
 
 interface InventoryFormProps {
   initialData?: InventoryItem;
@@ -192,10 +193,10 @@ const InventoryForm: React.FC<InventoryFormProps> = ({ initialData, categories, 
           setImageUploadStatus('Picture updated successfully');
         }
       } else {
-        alert(res.error || 'Failed to process image file.');
+        toast.error(res.error || 'Failed to process image file.', 'Image Error');
       }
     } catch (err: any) {
-      alert(err.message || 'Image upload error.');
+      toast.error(err.message || 'Image upload error.', 'Upload Error');
     } finally {
       setIsUploadingImage(false);
       if (imageInputRef.current) imageInputRef.current.value = '';
@@ -205,7 +206,7 @@ const InventoryForm: React.FC<InventoryFormProps> = ({ initialData, categories, 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.quantity || !formData.location) {
-        alert("Please fill in all required fields.");
+        toast.warning("Please fill in all required fields (Name, Quantity, and Location).", "Required Fields Missing");
         return;
     }
     
@@ -219,7 +220,7 @@ const InventoryForm: React.FC<InventoryFormProps> = ({ initialData, categories, 
         finalData.maxBorrowable = null;
     } else if (finalData.maxBorrowable !== undefined && finalData.maxBorrowable !== null && finalData.quantity !== undefined) {
         if (finalData.maxBorrowable > finalData.quantity) {
-             alert("Borrow limit cannot be higher than total quantity.");
+             toast.error("Borrow limit cannot be higher than total quantity.", "Invalid Limit");
              return;
         }
     }

@@ -7,6 +7,7 @@ import * as notifications from '../services/notificationService';
 import { Search, CheckCircle, XCircle, Trash2, Printer, Eye, Loader2, X, Calendar, MapPin, Tag, Info, Hand, FileText } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import BorrowerAgreementModal from './BorrowerAgreementModal';
+import { toast } from '../context/ToastContext';
 
 interface RequestsListProps {
   onRefresh?: () => void;
@@ -93,11 +94,13 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
               await notifications.notifyBorrowerOfStatusChange(currentSettings, req, 'Approved');
               await loadRequests();
               onRefresh?.();
+              toast.success(`Request ${req.referenceCode || ''} approved successfully.`, 'Request Approved');
           } else {
-              alert(result.message || "Approval failed.");
+              toast.error(result.message || "Approval failed.", "Approval Failed");
           }
-      } catch (err) {
+      } catch (err: any) {
           console.error(err);
+          toast.error(err.message || "Approval failed due to an error.", "Error");
       } finally {
           setProcessingId(null);
       }

@@ -5,6 +5,7 @@ import { PropertyItem } from '../types';
 import { getHighestPISSequence, recordPISSequenceUsed } from '../services/propertyStorageService';
 import { LEON_NHS_SEAL_DATA_URI } from '../services/schoolSeal';
 import { X, Printer, Cable, Eye, RotateCw } from 'lucide-react';
+import { toast } from '../context/ToastContext';
 
 interface CableStickerGeneratorModalProps {
   properties?: PropertyItem[];
@@ -86,7 +87,7 @@ export const CableStickerGeneratorModal: React.FC<CableStickerGeneratorModalProp
   const handlePrint = () => {
     const printWindow = window.open('', '', 'width=950,height=900');
     if (!printWindow) {
-      alert('Please allow popups to print cable peripheral stickers.');
+      toast.warning('Please allow popups in your browser to print cable peripheral stickers.', 'Popups Blocked');
       return;
     }
 

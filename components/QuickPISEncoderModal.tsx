@@ -5,6 +5,7 @@ import { PROPERTY_CATEGORIES, FUND_SOURCES, generateNextPropertyNumber, getPrope
 import { X, Search, CheckCircle2, ArrowRight, Building2, Tag, Save, Sparkles, AlertCircle, Check } from 'lucide-react';
 import LocationSearchSelect from './LocationSearchSelect';
 import PropertyNameSearchSelect from './PropertyNameSearchSelect';
+import { toast } from '../context/ToastContext';
 
 interface QuickPISEncoderModalProps {
   existingItems: PropertyItem[];
@@ -69,11 +70,11 @@ export const QuickPISEncoderModal: React.FC<QuickPISEncoderModalProps> = ({
   const handleSaveNew = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProp.name?.trim()) {
-      alert('Please enter the Article / Property Name.');
+      toast.warning('Please enter the Article / Property Name.', 'Missing Name');
       return;
     }
     if (!newProp.propertyNumber?.trim()) {
-      alert('Property Number is required.');
+      toast.warning('Property Number is required.', 'Missing Property Number');
       return;
     }
 

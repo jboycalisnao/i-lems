@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { InventoryItem } from '../types';
 import { X, HandPlatter, Search, Tag, Lock } from 'lucide-react';
+import { toast } from '../context/ToastContext';
 
 interface BorrowModalProps {
   availableItems: InventoryItem[];
@@ -45,7 +46,7 @@ const BorrowModal: React.FC<BorrowModalProps> = ({ availableItems, initialItem, 
     e.preventDefault();
     if (!selectedItem) return;
     if (quantity > available) {
-        alert("Quantity exceeds available loan stock.");
+        toast.error("Quantity exceeds available loan stock.", "Stock Limit Exceeded");
         return;
     }
     onConfirm(selectedItem, borrowerName, borrowerId, quantity, dueDate, borrowerEmail.trim() || undefined, specificId);

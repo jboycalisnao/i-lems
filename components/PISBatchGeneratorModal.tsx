@@ -6,6 +6,7 @@ import { generateNextPISCode, getHighestPISSequence, recordPISSequenceUsed } fro
 import { LEON_NHS_SEAL_DATA_URI } from '../services/schoolSeal';
 import { DEPLOYED_URL } from '../branding';
 import { X, Printer, Sparkles, Layers, Sliders, CheckSquare, Grid, Eye } from 'lucide-react';
+import { toast } from '../context/ToastContext';
 
 interface PISBatchGeneratorModalProps {
   properties?: PropertyItem[];
@@ -163,7 +164,7 @@ export const PISBatchGeneratorModal: React.FC<PISBatchGeneratorModalProps> = ({
   const handlePrint = () => {
     const printWindow = window.open('', '', 'width=950,height=900');
     if (!printWindow) {
-      alert('Please allow popups to print PIS stickers.');
+      toast.warning('Please allow popups in your browser to print PIS stickers.', 'Popups Blocked');
       return;
     }
 
