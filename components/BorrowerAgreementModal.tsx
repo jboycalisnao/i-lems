@@ -1,8 +1,7 @@
-
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { BorrowRequest } from '../types';
-import { X, Printer, FileText, CheckCircle2, ShieldCheck, AlertCircle, QrCode } from 'lucide-react';
+import { X, Printer, FileText } from 'lucide-react';
 import { SYSTEM_NAME } from '../branding';
 
 interface BorrowerAgreementModalProps {
@@ -11,264 +10,448 @@ interface BorrowerAgreementModalProps {
   appName: string;
   logoUrl?: string;
   labInCharge?: string;
+  initialMode?: 'blank' | 'populated';
 }
 
-const BorrowerAgreementModal: React.FC<BorrowerAgreementModalProps> = ({ request, onClose, appName, logoUrl, labInCharge }) => {
-  
+const BorrowerAgreementModal: React.FC<BorrowerAgreementModalProps> = ({ 
+  request, 
+  onClose, 
+  appName, 
+  logoUrl, 
+  labInCharge,
+  initialMode
+}) => {
+  // A5 Landscape is the default per specification
+  const [paperFormat, setPaperFormat] = useState<'a5_landscape' | 'a4_portrait'>('a5_landscape');
+  const [templateMode, setTemplateMode] = useState<'blank' | 'populated'>(
+    initialMode || (request.id === 'blank' || request.referenceCode === 'BLANK-FORM' ? 'blank' : 'blank')
+  );
+
   const qrUrl = useMemo(() => {
     const trackingUrl = `${window.location.origin}?ref=${request.referenceCode}`;
     return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(trackingUrl)}`;
   }, [request.referenceCode]);
 
-  const handlePrint = () => {
-    const printWindow = window.open('', '', 'height=900,width=800');
-    if (printWindow) {
-      printWindow.document.write('<html><head><title>Lab Utilization Permit</title>');
-      printWindow.document.write(`
-        <style>
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
-          @media print {
-            @page { size: A4; margin: 1.2cm; }
-            body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; }
-          }
-          body { 
-            font-family: 'Inter', sans-serif; 
-            color: #000; 
-            line-height: 1.4; 
-            font-size: 10pt; 
-          }
-          .print-header {
-            text-align: center;
-            border-bottom: 2px solid #000;
-            padding-bottom: 12px;
-            margin-bottom: 20px;
-            position: relative;
-          }
-          .print-logo {
-            height: 75px;
-            width: auto;
-            margin-bottom: 8px;
-            display: block;
-            margin-left: auto;
-            margin-right: auto;
-          }
-          .print-ref-badge {
-            position: absolute;
-            top: 0;
-            right: 0;
-            border: 1.5px solid #000;
-            padding: 4px 10px;
-            font-weight: 800;
-            font-size: 9pt;
-            background: #f9f9f9;
-          }
-          .print-app-name {
-            font-size: 16pt;
-            font-weight: 800;
-            text-transform: uppercase;
-            margin: 0;
-            letter-spacing: -0.02em;
-          }
-          .print-sub-header {
-            font-size: 9pt;
-            color: #444;
-            margin: 2px 0 0;
-            font-weight: 600;
-          }
-          .doc-title {
-            text-align: center;
-            font-weight: 800;
-            font-size: 13pt;
-            margin: 20px 0;
-            text-decoration: underline;
-            text-transform: uppercase;
-          }
-          .meta-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-bottom: 20px;
-          }
-          .meta-item {
-            border-bottom: 1px solid #ddd;
-            padding-bottom: 3px;
-          }
-          .meta-label {
-            font-size: 7.5pt;
-            font-weight: 700;
-            text-transform: uppercase;
-            color: #666;
-            display: block;
-          }
-          .meta-value {
-            font-weight: 700;
-            font-size: 10.5pt;
-          }
-          .section-heading {
-            font-weight: 800;
-            text-transform: uppercase;
-            font-size: 9pt;
-            border-bottom: 1.5px solid #000;
-            margin-bottom: 10px;
-            padding-bottom: 2px;
-            width: fit-content;
-          }
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 20px;
-          }
-          th, td {
-            border: 1px solid #000;
-            padding: 8px;
-            text-align: left;
-            font-size: 9.5pt;
-          }
-          th {
-            background-color: #f2f2f2;
-            font-weight: 700;
-            text-transform: uppercase;
-            font-size: 8pt;
-          }
-          .terms-list {
-            font-size: 8.5pt;
-            padding-left: 18px;
-            margin: 10px 0;
-          }
-          .terms-list li {
-            margin-bottom: 6px;
-            text-align: justify;
-          }
-          .signature-area {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 40px;
-            align-items: flex-end;
-          }
-          .sig-box {
-            text-align: center;
-            width: 45%;
-          }
-          .sig-line {
-            border-top: 1.5px solid #000;
-            padding-top: 4px;
-            font-weight: 700;
-            text-transform: uppercase;
-            font-size: 10pt;
-          }
-          .sig-label {
-            font-size: 8pt;
-            color: #555;
-          }
-          .qr-container {
-            text-align: right;
-          }
-          .qr-img {
-            width: 75px;
-            height: 75px;
-            border: 1px solid #eee;
-          }
-          .footer-note {
-            margin-top: 30px;
-            border-top: 1px solid #eee;
-            padding-top: 8px;
-            font-size: 7.5pt;
-            color: #888;
-            font-style: italic;
-            display: flex;
-            justify-content: space-between;
-          }
-        </style>
-      `);
-      printWindow.document.write('</head><body>');
-      
-      // Manually construct the printable content for absolute control over layout
-      printWindow.document.write(`
-        <div class="print-header">
-          <div class="print-ref-badge">REF: ${request.referenceCode}</div>
-          ${logoUrl ? `<img src="${logoUrl}" class="print-logo" />` : ''}
-          <h1 class="print-app-name">${appName}</h1>
-          <p class="print-sub-header">Science Laboratory</p>
-          <p class="print-sub-header">Official Utilization Permit & Accountability Agreement</p>
-        </div>
-
-        <div class="doc-title">Laboratory Utilization Permit</div>
-
-        <div class="meta-grid">
-          <div class="meta-item">
-            <span class="meta-label">Authorized Borrower</span>
-            <span class="meta-value">${request.borrowerName}</span>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">ID / Grade & Section</span>
-            <span class="meta-value">${request.borrowerId}</span>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">Utilization Date</span>
-            <span class="meta-value">${new Date(request.requestDate).toLocaleDateString(undefined, { dateStyle: 'long' })}</span>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">Required Return Date</span>
-            <span class="meta-value" style="color: #AF1456;">${request.returnDate}</span>
-          </div>
-        </div>
-
-        <div class="section-heading">I. Equipment Tracking (Lent Items)</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Description of Equipment / Apparatus</th>
-              <th style="width: 60px; text-align: center;">Qty</th>
-              <th>Release State</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${request.items.map(item => `
-              <tr>
-                <td style="font-weight: 600;">${item.itemName}</td>
-                <td style="text-align: center; font-weight: 700;">${item.quantity}</td>
-                <td style="font-style: italic;">Verified Functional</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-
-        <div class="section-heading">II. Binding Accountability Terms</div>
-        <ol class="terms-list">
-          <li><strong>ABSOLUTE STEWARDSHIP:</strong> The Borrower assumes full physical and legal responsibility for the listed items from release until formal return verification.</li>
-          <li><strong>PRE-USE INSPECTION:</strong> Discrepancies must be reported <em>immediately</em> upon collection; failure to do so indicates acceptance of current state.</li>
-          <li><strong>LIABILITY FOR DAMAGE:</strong> Breakage, loss, or theft due to negligence requires full restitution via replacement with a new identical unit or payment of current market value.</li>
-          <li><strong>TEMPORAL COMPLIANCE:</strong> Return must be initiated on or before the indicated due date. Late returns may trigger utilization suspension and administrative penalties.</li>
-          <li><strong>SAFETY PROTOCOL:</strong> Strict adherence to lab safety standards and equipment handling guidelines is mandatory throughout the borrowing period.</li>
-        </ol>
-
-        <p style="text-align: center; font-style: italic; margin-top: 25px; font-weight: 600;">"I certify that I have read, understood, and voluntarily bound myself to these terms."</p>
-
-        <div class="signature-area">
-          <div class="sig-box">
-            <div class="sig-line">${request.borrowerName}</div>
-            <div class="sig-label">Signature of Borrower</div>
-          </div>
-          <div class="sig-box">
-            <div class="sig-line">${labInCharge || '&nbsp;'}</div>
-            <div class="sig-label">Laboratory Custodian In-Charge</div>
-          </div>
-          <div class="qr-container">
-            <img src="${qrUrl}" class="qr-img" />
-            <div style="font-size: 6pt; font-weight: 800; text-transform: uppercase; margin-top: 2px;">Verify Record</div>
-          </div>
-        </div>
-
-        <div class="footer-note">
-          <div>System Generated • ${SYSTEM_NAME} • Digital Ref: ${request.referenceCode}</div>
-          <div>Printed: ${new Date().toLocaleString()} • Page 1 of 1</div>
-        </div>
-      `);
-
-      printWindow.document.write('<script>window.onload = function() { window.print(); }</script>');
-      printWindow.document.write('</body></html>');
-      printWindow.document.close();
+  const formattedRequestDate = useMemo(() => {
+    try {
+      return new Date(request.requestDate).toLocaleDateString(undefined, { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric' 
+      });
+    } catch {
+      return request.requestDate;
     }
+  }, [request.requestDate]);
+
+  const isA5 = paperFormat === 'a5_landscape';
+  const isBlank = templateMode === 'blank';
+
+  const handlePrint = () => {
+    const printWindow = window.open('', '', 'height=900,width=1100');
+    if (!printWindow) return;
+
+    printWindow.document.write('<!DOCTYPE html><html><head>');
+    printWindow.document.write(`<title>General Loan Agreement (${isA5 ? 'A5 Landscape' : 'A4'}) - ${isBlank ? 'Blank Template' : request.referenceCode}</title>`);
+    printWindow.document.write(`
+      <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        
+        @page {
+          size: ${isA5 ? 'A5 landscape' : 'A4 portrait'};
+          margin: ${isA5 ? '5mm 7mm' : '10mm 12mm'};
+        }
+        
+        * {
+          box-sizing: border-box;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+
+        body { 
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+          color: #111827; 
+          line-height: ${isA5 ? '1.2' : '1.35'}; 
+          font-size: ${isA5 ? '7pt' : '9pt'}; 
+          margin: 0;
+          padding: 0;
+          background: #fff;
+        }
+
+        .header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          border-bottom: 1.5px solid #111827;
+          padding-bottom: ${isA5 ? '4px' : '8px'};
+          margin-bottom: ${isA5 ? '6px' : '10px'};
+        }
+
+        .header-brand {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .header-logo {
+          height: ${isA5 ? '34px' : '48px'};
+          width: auto;
+          object-fit: contain;
+        }
+
+        .header-title-block {
+          text-align: center;
+          flex: 1;
+        }
+
+        .doc-main-title {
+          font-size: ${isA5 ? '10pt' : '13pt'};
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          margin: 0;
+          color: #0f172a;
+        }
+
+        .header-sub {
+          font-size: ${isA5 ? '6.5pt' : '8pt'};
+          color: #475569;
+          font-weight: 600;
+          margin: 1px 0 0;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+
+        .ref-box {
+          border: 1.5px solid #111827;
+          padding: ${isA5 ? '2px 8px' : '4px 10px'};
+          text-align: right;
+          background-color: #f8fafc;
+          min-width: ${isA5 ? '110px' : '140px'};
+        }
+
+        .ref-box-label {
+          font-size: ${isA5 ? '5.5pt' : '6.5pt'};
+          font-weight: 700;
+          color: #64748b;
+          text-transform: uppercase;
+          display: block;
+        }
+
+        .ref-box-val {
+          font-size: ${isA5 ? '8pt' : '10pt'};
+          font-weight: 800;
+          font-family: monospace;
+          color: #0f172a;
+        }
+
+        .grid-2 {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: ${isA5 ? '6px' : '10px'};
+          margin-bottom: ${isA5 ? '6px' : '10px'};
+        }
+
+        .card {
+          border: 1px solid #cbd5e1;
+          border-radius: 3px;
+          padding: ${isA5 ? '4px 6px' : '6px 8px'};
+          background-color: #f8fafc;
+        }
+
+        .card-title {
+          font-size: ${isA5 ? '6.5pt' : '7.5pt'};
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: #1e293b;
+          border-bottom: 1px solid #e2e8f0;
+          padding-bottom: 2px;
+          margin-bottom: ${isA5 ? '3px' : '5px'};
+        }
+
+        .field-row {
+          display: flex;
+          align-items: flex-end;
+          padding: ${isA5 ? '1.5px 0' : '2.5px 0'};
+          font-size: ${isA5 ? '6.8pt' : '8pt'};
+        }
+
+        .field-lbl {
+          font-weight: 600;
+          color: #475569;
+          white-space: nowrap;
+          padding-right: 4px;
+        }
+
+        .field-line {
+          flex: 1;
+          border-bottom: 1px dotted #94a3b8;
+          min-height: ${isA5 ? '11px' : '14px'};
+          padding-left: 4px;
+          font-weight: 700;
+          color: #0f172a;
+        }
+
+        .section-bar {
+          font-size: ${isA5 ? '6.5pt' : '7.5pt'};
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: #1e293b;
+          border-bottom: 1px solid #111827;
+          padding-bottom: 1px;
+          margin: ${isA5 ? '4px 0 3px' : '8px 0 5px'};
+        }
+
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-bottom: ${isA5 ? '4px' : '8px'};
+        }
+
+        th, td {
+          border: 1px solid #cbd5e1;
+          padding: ${isA5 ? '2.5px 4px' : '4px 6px'};
+          text-align: left;
+          font-size: ${isA5 ? '6.5pt' : '8pt'};
+        }
+
+        th {
+          background-color: #f1f5f9;
+          font-weight: 700;
+          text-transform: uppercase;
+          font-size: ${isA5 ? '5.8pt' : '7pt'};
+          color: #334155;
+        }
+
+        .terms-block {
+          border: 1px solid #e2e8f0;
+          background: #fafafa;
+          padding: ${isA5 ? '3px 6px' : '6px 10px'};
+          border-radius: 3px;
+          margin-bottom: ${isA5 ? '4px' : '8px'};
+          font-size: ${isA5 ? '5.8pt' : '7pt'};
+          line-height: ${isA5 ? '1.15' : '1.3'};
+          color: #334155;
+        }
+
+        .terms-list {
+          margin: 0;
+          padding-left: 12px;
+        }
+
+        .terms-list li {
+          margin-bottom: 1px;
+        }
+
+        .cert-note {
+          text-align: center;
+          font-style: italic;
+          font-weight: 600;
+          font-size: ${isA5 ? '6pt' : '7.5pt'};
+          color: #1e293b;
+          margin: ${isA5 ? '3px 0' : '6px 0'};
+        }
+
+        .sigs-wrap {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          margin-top: ${isA5 ? '6px' : '12px'};
+          gap: 12px;
+        }
+
+        .sig-box {
+          flex: 1;
+          text-align: center;
+        }
+
+        .sig-rule {
+          border-top: 1.5px solid #111827;
+          padding-top: 2px;
+          font-size: ${isA5 ? '6.8pt' : '8pt'};
+          font-weight: 800;
+          text-transform: uppercase;
+          color: #0f172a;
+          min-height: ${isA5 ? '13px' : '16px'};
+        }
+
+        .sig-sub {
+          font-size: ${isA5 ? '5.5pt' : '6.5pt'};
+          color: #64748b;
+          text-transform: uppercase;
+          font-weight: 600;
+        }
+
+        .footer {
+          margin-top: ${isA5 ? '4px' : '8px'};
+          border-top: 1px solid #e2e8f0;
+          padding-top: 2px;
+          font-size: ${isA5 ? '5pt' : '6.5pt'};
+          color: #94a3b8;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+      </style>
+    `);
+    printWindow.document.write('</head><body>');
+
+    printWindow.document.write(`
+      <!-- Document Header -->
+      <div class="header">
+        <div class="header-brand">
+          ${logoUrl ? `<img src="${logoUrl}" class="header-logo" alt="Logo" />` : ''}
+          <div>
+            <div style="font-size: ${isA5 ? '8pt' : '11pt'}; font-weight: 800; text-transform: uppercase; color: #0f172a; line-height: 1;">
+              ${appName}
+            </div>
+            <div class="header-sub">Science Laboratory Management</div>
+          </div>
+        </div>
+
+        <div class="header-title-block">
+          <h1 class="doc-main-title">General Loan Agreement Form</h1>
+          <div class="header-sub">
+            ${isBlank ? 'Official Blank Equipment Requisition & Accountability Slip' : 'Equipment Requisition & Accountability Slip'} (${isA5 ? 'A5 Landscape' : 'A4 Sheet'})
+          </div>
+        </div>
+
+        <div class="ref-box">
+          <span class="ref-box-label">Reference No.</span>
+          <span class="ref-box-val">${isBlank ? '________________' : request.referenceCode}</span>
+        </div>
+      </div>
+
+      <!-- Information Grid: Borrower Info & Reference Info -->
+      <div class="grid-2">
+        <!-- Borrower Information -->
+        <div class="card">
+          <div class="card-title">Borrower Information</div>
+          <div class="field-row">
+            <span class="field-lbl">Full Name:</span>
+            <span class="field-line">${isBlank ? '' : request.borrowerName}</span>
+          </div>
+          <div class="field-row">
+            <span class="field-lbl">ID / Grade & Section:</span>
+            <span class="field-line">${isBlank ? '' : request.borrowerId}</span>
+          </div>
+          <div class="field-row">
+            <span class="field-lbl">Contact / Email:</span>
+            <span class="field-line">${isBlank ? '' : (request.borrowerEmail || '—')}</span>
+          </div>
+          <div class="field-row">
+            <span class="field-lbl">Supervising Instructor:</span>
+            <span class="field-line">${isBlank ? '' : (request.instructorName || '—')}</span>
+          </div>
+        </div>
+
+        <!-- Request Reference Information -->
+        <div class="card">
+          <div class="card-title">Request Reference Information</div>
+          <div class="field-row">
+            <span class="field-lbl">Control / Ref Code:</span>
+            <span class="field-line" style="font-family: monospace;">${isBlank ? '' : request.referenceCode}</span>
+          </div>
+          <div class="field-row">
+            <span class="field-lbl">Date of Utilization:</span>
+            <span class="field-line">${isBlank ? '' : formattedRequestDate}</span>
+          </div>
+          <div class="field-row">
+            <span class="field-lbl">Required Return Date:</span>
+            <span class="field-line" style="${isBlank ? '' : 'color: #991b1b; font-weight: 800;'}">${isBlank ? '' : request.returnDate}</span>
+          </div>
+          <div class="field-row">
+            <span class="field-lbl">Purpose / Schedule Slot:</span>
+            <span class="field-line">${isBlank ? '' : (request.reservationSlot ? `Slot: ${request.reservationSlot}` : 'Standard Laboratory Session')}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Equipment Record Table -->
+      <div class="section-bar">I. Lent Equipment / Apparatus Record</div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 20px; text-align: center;">#</th>
+            <th>Description of Equipment / Apparatus</th>
+            <th style="width: 45px; text-align: center;">Qty</th>
+            <th style="width: 80px;">Tag / Unit ID</th>
+            <th style="width: 85px;">Release State</th>
+            <th style="width: 85px;">Return Inspection</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${isBlank ? `
+            <tr><td style="text-align: center;">1</td><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>
+            <tr><td style="text-align: center;">2</td><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>
+            <tr><td style="text-align: center;">3</td><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>
+            <tr><td style="text-align: center;">4</td><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>
+          ` : request.items.map((item, idx) => `
+            <tr>
+              <td style="text-align: center; font-weight: 700;">${idx + 1}</td>
+              <td style="font-weight: 600;">${item.itemName}</td>
+              <td style="text-align: center; font-weight: 800; color: #2563eb;">${item.quantity}</td>
+              <td>—</td>
+              <td style="color: #15803d; font-weight: 600;">Verified Functional</td>
+              <td></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+
+      <!-- Binding Loan Terms -->
+      <div class="section-bar">II. Binding Loan Terms & Accountability</div>
+      <div class="terms-block">
+        <ol class="terms-list">
+          <li><strong>Custody & Safety:</strong> Borrower assumes absolute physical stewardship for the borrowed equipment until official return and custodian verification.</li>
+          <li><strong>Pre-Use Inspection:</strong> Any discrepancies or defects must be noted immediately upon release prior to departure from the science laboratory.</li>
+          <li><strong>Liability for Damage:</strong> Any loss, breakage, or damage due to negligence requires identical unit replacement or institutional restitution.</li>
+          <li><strong>Timely Return:</strong> Equipment must be surrendered on or before the indicated return date to maintain active borrowing privileges.</li>
+        </ol>
+      </div>
+
+      <div class="cert-note">
+        "I hereby certify that I have received the listed equipment in good order and bind myself to the terms of this loan agreement."
+      </div>
+
+      <!-- Signatures Area -->
+      <div class="sigs-wrap">
+        <div class="sig-box">
+          <div class="sig-rule">${isBlank ? '&nbsp;' : request.borrowerName}</div>
+          <div class="sig-sub">Signature over Printed Name of Borrower</div>
+        </div>
+
+        <div class="sig-box">
+          <div class="sig-rule">${labInCharge || 'Laboratory Custodian'}</div>
+          <div class="sig-sub">Laboratory Custodian In-Charge</div>
+        </div>
+
+        <div class="sig-box">
+          <div class="sig-rule">&nbsp;</div>
+          <div class="sig-sub">Surrendered & Verified Return Date</div>
+        </div>
+
+        ${!isBlank ? `
+          <div style="width: 44px; text-align: center;">
+            <img src="${qrUrl}" style="width: 38px; height: 38px; border: 1px solid #cbd5e1; padding: 1px;" alt="QR" />
+            <div style="font-size: 4.5pt; font-weight: 800; text-transform: uppercase; color: #64748b;">Verify</div>
+          </div>
+        ` : ''}
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <div>${SYSTEM_NAME} • General Loan Agreement Template</div>
+        <div>Format: ${isA5 ? 'A5 Landscape (210 × 148 mm)' : 'A4 Sheet'} • ${isBlank ? 'Blank Form Template' : `Ref: ${request.referenceCode}`}</div>
+        <div>Single Page Slip • Page 1 of 1</div>
+      </div>
+    `);
+
+    printWindow.document.write('<script>window.onload = function() { window.print(); }</script>');
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
   };
 
   const modalContent = (
@@ -277,146 +460,357 @@ const BorrowerAgreementModal: React.FC<BorrowerAgreementModalProps> = ({ request
       role="dialog"
       aria-modal="true"
     >
-      <div className="bg-white rounded-md shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in duration-300 border border-gray-200">
+      <div className="bg-white rounded-md shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[96vh] animate-in zoom-in duration-300 border border-gray-200">
         
-        {/* Modal Header */}
-        <div className="p-4 bg-gray-900 text-white flex justify-between items-center shadow-lg flex-shrink-0">
+        {/* Modal Header with Clean Institutional Styling */}
+        <div className="p-4 bg-white border-b border-gray-200 flex flex-wrap gap-3 justify-between items-center flex-shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-500 rounded-md"><FileText className="w-5 h-5 text-white" /></div>
+            <div className="p-2 bg-indigo-50 border border-indigo-100 rounded-md">
+              <FileText className="w-5 h-5 text-indigo-600" />
+            </div>
             <div>
-              <h3 className="font-bold text-lg leading-tight">Utilization Permit Preview</h3>
-              <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Standard A4 Single-Page Slip</p>
+              <h3 className="font-bold text-lg leading-tight text-gray-900">General Loan Agreement Form</h3>
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">
+                {isA5 ? 'Landscape A5 Sheet Paper (210 × 148 mm)' : 'Portrait A4 Sheet Paper (210 × 297 mm)'}
+                {isBlank ? ' • Blank Form Template' : ' • Populated with Request'}
+              </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-white transition-colors">
-            <X className="w-6 h-6" />
-          </button>
+
+          <div className="flex items-center flex-wrap gap-2.5">
+            {/* Template Mode: Blank vs Populated */}
+            <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-md border border-gray-200">
+              <span className="text-[11px] font-bold text-gray-500 px-1.5 uppercase tracking-wider">Mode:</span>
+              <button
+                type="button"
+                onClick={() => setTemplateMode('blank')}
+                className={`px-2.5 py-1 text-xs font-bold rounded transition-colors ${
+                  isBlank 
+                    ? 'bg-indigo-600 text-white shadow-xs' 
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+              >
+                Blank Template
+              </button>
+              <button
+                type="button"
+                onClick={() => setTemplateMode('populated')}
+                className={`px-2.5 py-1 text-xs font-bold rounded transition-colors ${
+                  !isBlank 
+                    ? 'bg-indigo-600 text-white shadow-xs' 
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+              >
+                Filled Slip
+              </button>
+            </div>
+
+            {/* Paper Orientation Selector */}
+            <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-md border border-gray-200">
+              <span className="text-[11px] font-bold text-gray-500 px-1.5 uppercase tracking-wider">Sheet:</span>
+              <button
+                type="button"
+                onClick={() => setPaperFormat('a5_landscape')}
+                className={`px-2.5 py-1 text-xs font-bold rounded transition-colors ${
+                  isA5 
+                    ? 'bg-indigo-600 text-white shadow-xs' 
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+              >
+                A5 Landscape
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaperFormat('a4_portrait')}
+                className={`px-2.5 py-1 text-xs font-bold rounded transition-colors ${
+                  !isA5 
+                    ? 'bg-indigo-600 text-white shadow-xs' 
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+              >
+                A4 Portrait
+              </button>
+            </div>
+
+            <button 
+              onClick={onClose} 
+              className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+              title="Close modal"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
-        {/* Form Preview Area (Interactive/Screen view) */}
-        <div className="flex-1 overflow-y-auto p-8 bg-gray-100/50">
-          <div className="bg-white p-10 shadow-sm border border-gray-200 max-w-[210mm] mx-auto min-h-[297mm] text-gray-900 font-sans leading-normal relative">
-            
-            <div className="text-right mb-4">
-              <span className="inline-block border-2 border-black px-4 py-1 font-black text-sm bg-gray-50">REF: {request.referenceCode}</span>
+        {/* On-Screen Preview Area */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-gray-100/70 flex justify-center items-start">
+          <div 
+            className={`bg-white shadow-sm border border-gray-300 text-gray-900 font-sans leading-normal relative w-full transition-all ${
+              isA5 
+                ? 'max-w-[210mm] min-h-[148mm] p-6 text-xs' 
+                : 'max-w-[210mm] min-h-[297mm] p-10 text-sm'
+            }`}
+          >
+            {/* Document Header */}
+            <div className="flex items-center justify-between border-b-2 border-gray-900 pb-2.5 mb-3">
+              <div className="flex items-center gap-2.5">
+                {logoUrl && (
+                  <img 
+                    src={logoUrl} 
+                    alt="Logo" 
+                    className={`object-contain ${isA5 ? 'h-9 w-auto' : 'h-12 w-auto'}`} 
+                  />
+                )}
+                <div>
+                  <h1 className={`font-black uppercase tracking-tight text-gray-900 ${isA5 ? 'text-sm' : 'text-lg'}`}>
+                    {appName}
+                  </h1>
+                  <p className="font-semibold text-gray-500 uppercase tracking-wider text-[9px]">
+                    Science Laboratory Management
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-center">
+                <h2 className={`font-black uppercase tracking-wide text-gray-900 ${isA5 ? 'text-xs md:text-sm' : 'text-base'}`}>
+                  General Loan Agreement Form
+                </h2>
+                <p className="text-gray-500 font-semibold text-[9px]">
+                  {isBlank ? 'Official Blank Equipment Requisition & Accountability Slip' : 'Equipment Requisition & Accountability Slip'} ({isA5 ? 'A5 Landscape' : 'A4 Sheet'})
+                </p>
+              </div>
+
+              <div className="border border-gray-900 bg-gray-50 px-2.5 py-1 text-right min-w-[100px]">
+                <span className="block text-[7.5px] font-bold text-gray-500 uppercase tracking-wider">Reference No.</span>
+                <span className={`font-black font-mono text-gray-900 ${isA5 ? 'text-xs' : 'text-sm'}`}>
+                  {isBlank ? '________________' : request.referenceCode}
+                </span>
+              </div>
             </div>
 
-            <div className="text-center border-b-2 border-black pb-4 mb-6">
-              {logoUrl && <img src={logoUrl} alt="Logo" className="h-20 mx-auto mb-3 block object-contain" />}
-              <h1 className="m-0 text-[22px] uppercase font-black tracking-tight">{appName}</h1>
-              <p className="m-0 text-[12px] font-bold text-gray-600">Science Laboratory</p>
-              <p className="m-0 text-[12px] font-bold text-gray-600 uppercase">Official Utilization Permit & Borrower Agreement</p>
+            {/* Information Grid: Borrower Info & Reference Info */}
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              {/* Borrower Information */}
+              <div className="border border-gray-300 rounded p-2.5 bg-gray-50/50">
+                <div className="font-black uppercase text-gray-800 text-[9.5px] tracking-wider border-b border-gray-200 pb-1 mb-1.5">
+                  Borrower Information
+                </div>
+                <div className="space-y-1 text-[11px]">
+                  <div className="flex items-end">
+                    <span className="text-gray-500 font-semibold text-[10px] whitespace-nowrap pr-1.5">Full Name:</span>
+                    <span className="flex-1 border-b border-dotted border-gray-400 font-bold text-gray-900 pl-1 min-h-[16px]">
+                      {isBlank ? '' : request.borrowerName}
+                    </span>
+                  </div>
+                  <div className="flex items-end">
+                    <span className="text-gray-500 font-semibold text-[10px] whitespace-nowrap pr-1.5">ID / Grade & Section:</span>
+                    <span className="flex-1 border-b border-dotted border-gray-400 font-bold text-gray-900 pl-1 min-h-[16px]">
+                      {isBlank ? '' : request.borrowerId}
+                    </span>
+                  </div>
+                  <div className="flex items-end">
+                    <span className="text-gray-500 font-semibold text-[10px] whitespace-nowrap pr-1.5">Contact / Email:</span>
+                    <span className="flex-1 border-b border-dotted border-gray-400 font-bold text-gray-900 pl-1 min-h-[16px]">
+                      {isBlank ? '' : (request.borrowerEmail || '—')}
+                    </span>
+                  </div>
+                  <div className="flex items-end">
+                    <span className="text-gray-500 font-semibold text-[10px] whitespace-nowrap pr-1.5">Supervising Instructor:</span>
+                    <span className="flex-1 border-b border-dotted border-gray-400 font-bold text-gray-900 pl-1 min-h-[16px]">
+                      {isBlank ? '' : (request.instructorName || '—')}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Request Reference Information */}
+              <div className="border border-gray-300 rounded p-2.5 bg-gray-50/50">
+                <div className="font-black uppercase text-gray-800 text-[9.5px] tracking-wider border-b border-gray-200 pb-1 mb-1.5">
+                  Request Reference Information
+                </div>
+                <div className="space-y-1 text-[11px]">
+                  <div className="flex items-end">
+                    <span className="text-gray-500 font-semibold text-[10px] whitespace-nowrap pr-1.5">Control / Ref Code:</span>
+                    <span className="flex-1 border-b border-dotted border-gray-400 font-bold font-mono text-gray-900 pl-1 min-h-[16px]">
+                      {isBlank ? '' : request.referenceCode}
+                    </span>
+                  </div>
+                  <div className="flex items-end">
+                    <span className="text-gray-500 font-semibold text-[10px] whitespace-nowrap pr-1.5">Date of Utilization:</span>
+                    <span className="flex-1 border-b border-dotted border-gray-400 font-bold text-gray-900 pl-1 min-h-[16px]">
+                      {isBlank ? '' : formattedRequestDate}
+                    </span>
+                  </div>
+                  <div className="flex items-end">
+                    <span className="text-gray-500 font-semibold text-[10px] whitespace-nowrap pr-1.5">Required Return Date:</span>
+                    <span className="flex-1 border-b border-dotted border-gray-400 font-bold text-red-700 pl-1 min-h-[16px]">
+                      {isBlank ? '' : request.returnDate}
+                    </span>
+                  </div>
+                  <div className="flex items-end">
+                    <span className="text-gray-500 font-semibold text-[10px] whitespace-nowrap pr-1.5">Purpose / Schedule Slot:</span>
+                    <span className="flex-1 border-b border-dotted border-gray-400 font-bold text-gray-900 pl-1 min-h-[16px]">
+                      {isBlank ? '' : (request.reservationSlot ? `Slot: ${request.reservationSlot}` : 'Standard Laboratory Session')}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div className="text-center font-black text-[16px] my-6 underline tracking-widest uppercase">LABORATORY UTILIZATION PERMIT</div>
-
-            <div className="grid grid-cols-2 gap-x-12 gap-y-4 mb-8">
-              <div className="border-b border-gray-300 pb-1">
-                <span className="block text-[10px] font-black text-gray-400 uppercase tracking-tighter">Authorized Borrower</span>
-                <span className="text-[14px] font-bold">{request.borrowerName}</span>
-              </div>
-              <div className="border-b border-gray-300 pb-1">
-                <span className="block text-[10px] font-black text-gray-400 uppercase tracking-tighter">ID / Grade & Section</span>
-                <span className="text-[14px] font-bold">{request.borrowerId}</span>
-              </div>
-              <div className="border-b border-gray-300 pb-1">
-                <span className="block text-[10px] font-black text-gray-400 uppercase tracking-tighter">Utilization Date</span>
-                <span className="text-[14px] font-bold">{new Date(request.requestDate).toLocaleDateString(undefined, { dateStyle: 'long' })}</span>
-              </div>
-              <div className="border-b border-gray-300 pb-1">
-                <span className="block text-[10px] font-black text-gray-400 uppercase tracking-tighter">Required Return Date</span>
-                <span className="text-[14px] font-bold text-maroon-600">{request.returnDate}</span>
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <span className="font-black uppercase text-[12px] border-b-2 border-black block mb-3 px-1">I. Inventory Tracking (Lent Items)</span>
-              <table className="w-full border-collapse border border-black text-[13px]">
+            {/* Lent Items Table */}
+            <div className="mb-2.5">
+              <span className="font-black uppercase text-[10px] border-b border-gray-900 block mb-1.5 px-0.5">
+                I. Lent Equipment / Apparatus Record
+              </span>
+              <table className="w-full border-collapse border border-gray-300 text-[10px]">
                 <thead>
-                  <tr className="bg-gray-100">
-                    <th className="border border-black p-2 text-left uppercase text-[11px]">Description of Equipment / Apparatus</th>
-                    <th className="border border-black p-2 text-center w-20 uppercase text-[11px]">Qty</th>
-                    <th className="border border-black p-2 text-left uppercase text-[11px]">Release State</th>
+                  <tr className="bg-gray-100 text-gray-700">
+                    <th className="border border-gray-300 p-1 text-center w-8 uppercase text-[8.5px]">#</th>
+                    <th className="border border-gray-300 p-1 text-left uppercase text-[8.5px]">Description of Equipment / Apparatus</th>
+                    <th className="border border-gray-300 p-1 text-center w-12 uppercase text-[8.5px]">Qty</th>
+                    <th className="border border-gray-300 p-1 text-left w-24 uppercase text-[8.5px]">Tag / Unit ID</th>
+                    <th className="border border-gray-300 p-1 text-left w-24 uppercase text-[8.5px]">Release State</th>
+                    <th className="border border-gray-300 p-1 text-left w-24 uppercase text-[8.5px]">Return Inspection</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {request.items.map((item, i) => (
-                    <tr key={i}>
-                      <td className="border border-black p-2 font-bold text-gray-800">{item.itemName}</td>
-                      <td className="border border-black p-2 text-center font-black text-blue-700">{item.quantity}</td>
-                      <td className="border border-black p-2 italic text-[11px]">Verified Functional</td>
-                    </tr>
-                  ))}
+                  {isBlank ? (
+                    <>
+                      <tr className="h-6">
+                        <td className="border border-gray-300 p-1 text-center font-bold">1</td>
+                        <td className="border border-gray-300 p-1"></td>
+                        <td className="border border-gray-300 p-1 text-center"></td>
+                        <td className="border border-gray-300 p-1"></td>
+                        <td className="border border-gray-300 p-1"></td>
+                        <td className="border border-gray-300 p-1"></td>
+                      </tr>
+                      <tr className="h-6">
+                        <td className="border border-gray-300 p-1 text-center font-bold">2</td>
+                        <td className="border border-gray-300 p-1"></td>
+                        <td className="border border-gray-300 p-1 text-center"></td>
+                        <td className="border border-gray-300 p-1"></td>
+                        <td className="border border-gray-300 p-1"></td>
+                        <td className="border border-gray-300 p-1"></td>
+                      </tr>
+                      <tr className="h-6">
+                        <td className="border border-gray-300 p-1 text-center font-bold">3</td>
+                        <td className="border border-gray-300 p-1"></td>
+                        <td className="border border-gray-300 p-1 text-center"></td>
+                        <td className="border border-gray-300 p-1"></td>
+                        <td className="border border-gray-300 p-1"></td>
+                        <td className="border border-gray-300 p-1"></td>
+                      </tr>
+                      <tr className="h-6">
+                        <td className="border border-gray-300 p-1 text-center font-bold">4</td>
+                        <td className="border border-gray-300 p-1"></td>
+                        <td className="border border-gray-300 p-1 text-center"></td>
+                        <td className="border border-gray-300 p-1"></td>
+                        <td className="border border-gray-300 p-1"></td>
+                        <td className="border border-gray-300 p-1"></td>
+                      </tr>
+                    </>
+                  ) : (
+                    request.items.map((item, i) => (
+                      <tr key={i} className="hover:bg-gray-50/50">
+                        <td className="border border-gray-300 p-1 text-center font-bold">{i + 1}</td>
+                        <td className="border border-gray-300 p-1 font-bold text-gray-800">{item.itemName}</td>
+                        <td className="border border-gray-300 p-1 text-center font-bold text-blue-700">{item.quantity}</td>
+                        <td className="border border-gray-300 p-1 text-gray-400">—</td>
+                        <td className="border border-gray-300 p-1 text-green-700 font-semibold">Verified Functional</td>
+                        <td className="border border-gray-300 p-1"></td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
 
-            <div className="mb-6">
-              <span className="font-black uppercase text-[12px] border-b-2 border-black block mb-3 px-1">II. Binding Accountability Terms</span>
-              <div className="text-[12px] leading-tight space-y-2">
-                <ol className="list-decimal pl-5 space-y-2 font-medium">
-                  <li><strong>ABSOLUTE STEWARDSHIP:</strong> The Borrower assumes full legal responsibility for the listed items from release until formal return verification.</li>
-                  <li><strong>PRE-USE INSPECTION:</strong> Discrepancies must be reported <em>immediately</em> upon collection; failure to do so indicates acceptance of current state.</li>
-                  <li><strong>LIABILITY FOR DAMAGE:</strong> Breakage, loss, or theft due to negligence requires full restitution via replacement with a new identical unit.</li>
-                  <li><strong>TEMPORAL COMPLIANCE:</strong> Return must be initiated on or before the indicated date. Late returns may trigger utilization suspension.</li>
-                  <li><strong>SAFETY PROTOCOL:</strong> Strict adherence to lab safety standards is mandatory throughout the borrowing period.</li>
+            {/* Terms & Conditions */}
+            <div className="mb-2.5">
+              <span className="font-black uppercase text-[10px] border-b border-gray-900 block mb-1 px-0.5">
+                II. Binding Loan Terms & Accountability
+              </span>
+              <div className="border border-gray-200 rounded p-2 bg-gray-50/60 text-[9px] leading-relaxed text-gray-700">
+                <ol className="list-decimal pl-3.5 space-y-0.5">
+                  <li><strong>Custody & Safety:</strong> Borrower assumes absolute physical stewardship for the borrowed equipment until official return and custodian verification.</li>
+                  <li><strong>Pre-Use Inspection:</strong> Any discrepancies or defects must be noted immediately upon release prior to departure from the science laboratory.</li>
+                  <li><strong>Liability for Damage:</strong> Any loss, breakage, or damage due to negligence requires identical unit replacement or institutional restitution.</li>
+                  <li><strong>Timely Return:</strong> Equipment must be surrendered on or before the indicated return date to maintain active borrowing privileges.</li>
                 </ol>
               </div>
             </div>
 
-            <div className="mt-10 text-[13px] italic text-gray-700 font-semibold text-center border-t border-gray-100 pt-4">
-              <p>"I hereby certify that I have read, understood, and voluntarily bound myself to this agreement."</p>
+            <div className="my-1.5 text-[9.5px] italic text-gray-700 font-semibold text-center">
+              "I hereby certify that I have received the listed equipment in good order and bind myself to the terms of this loan agreement."
             </div>
 
-            <div className="flex justify-between items-end mt-12 px-2">
-              <div className="flex-1 flex gap-12">
-                <div className="flex-1 text-center">
-                  <div className="border-t-2 border-black pt-1 font-black uppercase text-[13px]">{request.borrowerName}</div>
-                  <div className="text-[10px] text-gray-500 uppercase font-bold tracking-tighter">Signature of Borrower</div>
+            {/* Signatures Area */}
+            <div className="flex justify-between items-end mt-4 pt-2 px-1 gap-4">
+              <div className="flex-1 text-center">
+                <div className="border-t-2 border-gray-900 pt-1 font-black uppercase text-xs min-h-[16px]">
+                  {isBlank ? '' : request.borrowerName}
                 </div>
-                <div className="flex-1 text-center">
-                  <div className="border-t-2 border-black pt-1 font-black uppercase text-[13px]">{labInCharge || '&nbsp;'}</div>
-                  <div className="text-[10px] text-gray-500 uppercase font-bold tracking-tighter">Custodian In-Charge</div>
+                <div className="text-[8.5px] text-gray-500 uppercase font-bold tracking-tight">
+                  Signature over Printed Name of Borrower
                 </div>
               </div>
-              <div className="ml-12 text-right">
-                <div className="p-2 border border-gray-100 rounded-md inline-block bg-white shadow-sm">
-                  <img src={qrUrl} alt="Tracking QR" className="w-20 h-20" />
+
+              <div className="flex-1 text-center">
+                <div className="border-t-2 border-gray-900 pt-1 font-black uppercase text-xs min-h-[16px]">
+                  {labInCharge || 'Laboratory Custodian'}
                 </div>
-                <span className="block text-[8px] font-black text-gray-400 mt-1 uppercase tracking-widest">Verify Record</span>
+                <div className="text-[8.5px] text-gray-500 uppercase font-bold tracking-tight">
+                  Laboratory Custodian In-Charge
+                </div>
               </div>
+
+              <div className="flex-1 text-center">
+                <div className="border-t-2 border-gray-900 pt-1 font-black uppercase text-xs min-h-[16px]">
+                  &nbsp;
+                </div>
+                <div className="text-[8.5px] text-gray-500 uppercase font-bold tracking-tight">
+                  Surrendered & Verified Return Date
+                </div>
+              </div>
+
+              {!isBlank && (
+                <div className="text-center pl-2">
+                  <div className="p-0.5 border border-gray-300 rounded inline-block bg-white shadow-xs">
+                    <img src={qrUrl} alt="Tracking QR" className="w-10 h-10" />
+                  </div>
+                  <span className="block text-[7px] font-black text-gray-500 uppercase tracking-wider">
+                    Verify
+                  </span>
+                </div>
+              )}
             </div>
 
-            <div className="mt-12 pt-4 border-t border-gray-100 text-[10px] text-gray-400 flex justify-between items-center italic">
-              <div>{SYSTEM_NAME} • Document Ref: {request.referenceCode}</div>
-              <div className="font-bold">SYSTEM GENERATED: {new Date().toLocaleString()}</div>
-              <div>Page 1 of 1</div>
+            {/* System Footer Note */}
+            <div className="mt-4 pt-1.5 border-t border-gray-200 text-[8.5px] text-gray-400 flex justify-between items-center italic">
+              <div>${SYSTEM_NAME} • General Loan Agreement Template</div>
+              <div>Sheet: {isA5 ? 'A5 Landscape (210 × 148 mm)' : 'A4 Sheet'} • {isBlank ? 'Blank Form Template' : `Ref: ${request.referenceCode}`}</div>
+              <div>Single Page Slip • Page 1 of 1</div>
             </div>
           </div>
         </div>
 
-        {/* Action Bar */}
-        <div className="p-4 bg-white border-t border-gray-200 flex justify-between items-center flex-shrink-0">
-          <div className="flex items-center gap-4 text-xs font-medium text-gray-500">
-            <div className="flex items-center gap-1"><CheckCircle2 className="w-4 h-4 text-green-500" /> Professional Serif-Free</div>
-            <div className="flex items-center gap-1"><ShieldCheck className="w-4 h-4 text-blue-500" /> Fixed Logo Scale</div>
-            <div className="flex items-center gap-1"><QrCode className="w-4 h-4 text-indigo-500" /> Tracking Enabled</div>
-          </div>
-          <div className="flex gap-3">
-            <button 
-              onClick={onClose} 
-              className="px-6 py-2.5 border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 font-bold text-sm transition-all"
-            >
-              Close
-            </button>
-            <button 
-              onClick={handlePrint} 
-              className="flex items-center gap-2 px-8 py-2.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-bold text-sm transition-all shadow-lg shadow-indigo-200"
-            >
-              <Printer className="w-4 h-4" /> 
-              Print Formal Slip
-            </button>
-          </div>
+        {/* Modal Action Bar */}
+        <div className="p-4 bg-white border-t border-gray-200 flex justify-end items-center gap-3 flex-shrink-0">
+          <button 
+            type="button"
+            onClick={onClose} 
+            className="px-5 py-2.5 border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 font-bold text-sm transition-all"
+          >
+            Close
+          </button>
+          <button 
+            type="button"
+            onClick={handlePrint} 
+            className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-bold text-sm transition-all shadow-sm"
+          >
+            <Printer className="w-4 h-4" /> 
+            Print A5 Landscape Loan Agreement ({isBlank ? 'Blank Template' : 'Filled Slip'})
+          </button>
         </div>
 
       </div>

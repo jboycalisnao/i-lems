@@ -12,6 +12,7 @@ import {
   Search, Check, Tag, RefreshCw, AlertCircle, Layers, ArrowRight, Cloud, HardDrive
 } from 'lucide-react';
 import { SYSTEM_SHORT_NAME } from '../branding';
+import { renderEmailHeader } from '../services/emailTemplates';
 import { getCategoryColor, getCategoryIcon } from '../constants';
 import UserManagementSettings from './UserManagementSettings';
 import { 
@@ -340,11 +341,22 @@ ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS ddownload_api_key TEXT;`;
             to_email: recipients,
             subject: `${SYSTEM_SHORT_NAME} Connection Test`,
             body: `This is a test email from your Laboratory Inventory System (${formData.appName}). If you are reading this, your Gmail Automation is successfully configured!`,
-            html_body: `<div style="font-family: sans-serif; padding: 20px; border: 2px solid #2005A2; border-radius: 12px; text-align: center;">
-                <h2 style="color: #2005A2;">Connection Successful!</h2>
-                <p>This is a test email confirming that your Gmail SMTP integration is working correctly.</p>
-                <div style="background: #f8fafc; padding: 10px; border-radius: 8px; font-size: 12px; color: #64748b;">
-                    Sent from: ${formData.appName}
+            html_body: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f5; padding: 24px 12px; margin: 0;">
+                <div style="max-width: 520px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 2px 6px rgba(0,0,0,0.04);">
+                    ${renderEmailHeader({
+                        logoUrl: formData.logoUrl,
+                        appName: formData.appName,
+                        categoryTitle: 'System Diagnostic Test',
+                        mainTitle: 'Connection Successful!',
+                        subtitle: 'Gmail SMTP automation is successfully connected and transmitting.',
+                        accentColor: '#10b981'
+                    })}
+                    <div style="padding: 24px; text-align: center;">
+                        <p style="font-size: 14px; color: #334155; margin: 0 0 16px; line-height: 1.5;">This is a test notification confirming that your laboratory email automation service is operating correctly.</p>
+                        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; font-size: 12px; color: #64748b;">
+                            Dispatched from: <strong>${formData.appName}</strong>
+                        </div>
+                    </div>
                 </div>
             </div>`
         });

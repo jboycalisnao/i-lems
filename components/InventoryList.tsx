@@ -6,12 +6,13 @@ import {
   Edit2, Trash2, QrCode, Search, Filter, Barcode, FileText, List, 
   Printer, AlertTriangle, XCircle, Clipboard, ChevronDown, ChevronRight, 
   Package, LayoutGrid, Droplets, Minus, Paperclip, MapPin, Microscope,
-  X, Layers, Eye
+  X, Layers, Eye, Upload
 } from 'lucide-react';
 import { getCategoryColor, getCategoryIcon } from '../constants';
 import { SYSTEM_NAME } from '../branding';
 import * as storage from '../services/storageService';
 import ItemFileManagerModal from './ItemFileManagerModal';
+import { BulkInventoryModal } from './BulkInventoryModal';
 
 interface InventoryListProps {
   items: InventoryItem[];
@@ -50,6 +51,7 @@ const InventoryList: React.FC<InventoryListProps> = ({
   const [filterLocation, setFilterLocation] = useState<string>('All');
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [managingFilesItem, setManagingFilesItem] = useState<InventoryItem | null>(null);
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
 
   // Print plain equipment & quantity list per cabinet state
   const [isPrintLocationModalOpen, setIsPrintLocationModalOpen] = useState(false);
@@ -342,11 +344,14 @@ const InventoryList: React.FC<InventoryListProps> = ({
 
     const headerHtml = (locName?: string) => `
       <div class="deped-header">
-        <div class="deped-sub">Republic of the Philippines</div>
-        <div class="deped-dept">DEPARTMENT OF EDUCATION</div>
-        <div class="deped-div">Region VI - Western Visayas • Division of Iloilo • District of Leon</div>
-        <div class="school-name">LEON NATIONAL HIGH SCHOOL</div>
-        <div class="lab-sub">SCIENCE LABORATORY • INVENTORY MANAGEMENT SYSTEM</div>
+        <div class="header-main-row">
+          <div class="header-side-logo left-logo-box">
+            <img src="${window.location.origin}/img/Lab-Logo.png" class="header-logo-img lab-logo-img" alt="Jang Yeong-Sil Science Laboratory" />
+          </div>
+          <div class="header-side-logo right-logo-box">
+            <img src="${window.location.origin}/img/Tri-Logo.png" class="header-logo-img tri-logo-img" alt="Leon NHS Science Department" />
+          </div>
+        </div>
         <div class="doc-title">PHYSICAL INVENTORY LIST PER CABINET / STORAGE LOCATION</div>
         ${locName ? `<div class="cabinet-scope-pill">STORAGE LOCATION: ${escape(locName)}</div>` : ''}
       </div>
@@ -458,6 +463,7 @@ const InventoryList: React.FC<InventoryListProps> = ({
       <!DOCTYPE html>
       <html>
       <head>
+        <base href="${window.location.origin}/">
         <title>${escape(docTitle)}</title>
         <style>
           @page {
@@ -500,17 +506,54 @@ const InventoryList: React.FC<InventoryListProps> = ({
             line-height: 1.3;
           }
           .deped-header {
-            text-align: center;
             border-bottom: 2px solid #1e3a8a;
             padding-bottom: 6px;
             margin-bottom: 8px;
+            text-align: center;
           }
-          .deped-sub { font-size: 8pt; color: #4b5563; }
-          .deped-dept { font-size: 9.5pt; font-weight: bold; color: #1e3a8a; margin: 1px 0; }
-          .deped-div { font-size: 7.5pt; color: #4b5563; }
-          .school-name { font-size: 12pt; font-weight: 900; color: #991b1b; margin: 2px 0; letter-spacing: 0.5px; }
-          .lab-sub { font-size: 8pt; font-weight: 700; color: #1e3a8a; letter-spacing: 0.3px; }
-          .doc-title { font-size: 10.5pt; font-weight: 800; text-transform: uppercase; color: #111827; margin: 4px 0 2px 0; }
+          .header-main-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 4px;
+          }
+          .header-side-logo {
+            display: flex;
+            align-items: center;
+            flex-shrink: 0;
+          }
+          .left-logo-box {
+            justify-content: flex-start;
+            width: 140px;
+          }
+          .right-logo-box {
+            justify-content: flex-end;
+            width: 150px;
+          }
+          .header-logo-img {
+            max-width: 100%;
+            height: auto;
+            object-fit: contain;
+            display: block;
+          }
+          .lab-logo-img {
+            max-height: 52px;
+          }
+          .tri-logo-img {
+            max-height: 48px;
+          }
+          .header-center-text {
+            flex: 1;
+            text-align: center;
+            min-width: 0;
+          }
+          .deped-sub { font-size: 7.5pt; color: #4b5563; line-height: 1.2; }
+          .deped-dept { font-size: 9pt; font-weight: bold; color: #1e3a8a; margin: 1px 0; line-height: 1.2; }
+          .deped-div { font-size: 7pt; color: #4b5563; line-height: 1.2; }
+          .school-name { font-size: 11.5pt; font-weight: 900; color: #991b1b; margin: 1.5px 0; letter-spacing: 0.5px; }
+          .lab-sub { font-size: 7.5pt; font-weight: 700; color: #1e3a8a; letter-spacing: 0.3px; }
+          .doc-title { font-size: 10pt; font-weight: 800; text-transform: uppercase; color: #111827; margin: 4px 0 2px 0; }
           .cabinet-scope-pill {
             display: inline-block;
             background: #eff6ff;
@@ -652,9 +695,33 @@ const InventoryList: React.FC<InventoryListProps> = ({
         ${contentHtml}
         <script>
           window.onload = function() {
-            setTimeout(function() {
-              window.print();
-            }, 300);
+            var images = document.images;
+            var total = images.length;
+            var loaded = 0;
+            function triggerPrint() {
+              setTimeout(function() {
+                window.print();
+              }, 300);
+            }
+            if (!total) {
+              triggerPrint();
+            } else {
+              for (var i = 0; i < total; i++) {
+                if (images[i].complete) {
+                  loaded++;
+                  if (loaded === total) triggerPrint();
+                } else {
+                  images[i].addEventListener('load', function() {
+                    loaded++;
+                    if (loaded === total) triggerPrint();
+                  });
+                  images[i].addEventListener('error', function() {
+                    loaded++;
+                    if (loaded === total) triggerPrint();
+                  });
+                }
+              }
+            }
           };
         </script>
       </body>
@@ -781,6 +848,16 @@ const InventoryList: React.FC<InventoryListProps> = ({
                         <Printer className="w-4 h-4 text-blue-700" />
                         <span className="hidden md:inline">Print Cabinet List</span>
                         <span className="md:hidden">Print</span>
+                    </button>
+
+                    <button 
+                        onClick={() => setIsBulkModalOpen(true)}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-gray-50 text-gray-700 rounded-md transition-colors border border-gray-300 shadow-sm text-sm font-medium whitespace-nowrap cursor-pointer"
+                        title="Bulk import laboratory inventory or download templates"
+                    >
+                        <Upload className="w-4 h-4 text-gray-500" />
+                        <span className="hidden lg:inline">Bulk Import / Download</span>
+                        <span className="lg:hidden">Bulk</span>
                     </button>
                 </div>
             </div>
@@ -1238,15 +1315,32 @@ const InventoryList: React.FC<InventoryListProps> = ({
                   {/* Simulated Paper Sheet */}
                   <div className="bg-white border border-gray-300 shadow-md rounded-sm p-6 sm:p-8 max-w-2xl mx-auto text-xs text-gray-900 font-sans">
                     {/* Header */}
-                    <div className="text-center border-b-2 border-blue-900 pb-2 mb-3">
-                      <div className="text-[10px] text-gray-500 leading-tight">Republic of the Philippines</div>
-                      <div className="text-xs font-bold text-blue-900 leading-tight">DEPARTMENT OF EDUCATION</div>
-                      <div className="text-[10px] text-gray-500 leading-tight">Region VI - Western Visayas • Division of Iloilo • District of Leon</div>
-                      <div className="text-sm font-black text-red-800 tracking-wide my-0.5">LEON NATIONAL HIGH SCHOOL</div>
-                      <div className="text-[10px] font-bold text-blue-900">SCIENCE LABORATORY • INVENTORY MANAGEMENT SYSTEM</div>
-                      <div className="text-xs font-extrabold uppercase text-gray-900 mt-1">PHYSICAL INVENTORY LIST PER CABINET / STORAGE LOCATION</div>
-                      <div className="inline-block bg-blue-50 text-blue-800 border border-blue-200 px-2.5 py-0.5 rounded text-[11px] font-bold uppercase mt-1">
-                        STORAGE LOCATION: {previewLocationName}
+                    <div className="border-b-2 border-blue-900 pb-2 mb-3">
+                      <div className="flex items-center justify-between gap-4 mb-2">
+                        {/* Left Logo: Lab-Logo.png */}
+                        <div className="flex items-center justify-start">
+                          <img
+                            src="/img/Lab-Logo.png"
+                            alt="Jang Yeong-Sil Science Laboratory Logo"
+                            className="h-11 sm:h-13 w-auto object-contain"
+                          />
+                        </div>
+
+                        {/* Right Logo: Tri-Logo.png */}
+                        <div className="flex items-center justify-end">
+                          <img
+                            src="/img/Tri-Logo.png"
+                            alt="Leon NHS Science Department Logo"
+                            className="h-10 sm:h-12 w-auto object-contain"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="text-center">
+                        <div className="text-xs font-extrabold uppercase text-gray-900 mt-1">PHYSICAL INVENTORY LIST PER CABINET / STORAGE LOCATION</div>
+                        <div className="inline-block bg-blue-50 text-blue-800 border border-blue-200 px-2.5 py-0.5 rounded text-[11px] font-bold uppercase mt-1">
+                          STORAGE LOCATION: {previewLocationName}
+                        </div>
                       </div>
                     </div>
 
@@ -1373,6 +1467,17 @@ const InventoryList: React.FC<InventoryListProps> = ({
           }}
         />
       )}
+
+      <BulkInventoryModal
+        isOpen={isBulkModalOpen}
+        onClose={() => setIsBulkModalOpen(false)}
+        type="laboratory"
+        labItems={items}
+        categories={categories}
+        onSuccess={() => {
+          onRefresh?.();
+        }}
+      />
     </div>
   );
 };

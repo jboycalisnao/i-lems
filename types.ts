@@ -203,6 +203,8 @@ export interface PropertyStats {
   valueByCategory: { name: string; value: number }[];
   countByCondition: { name: string; value: number }[];
   valueByFundSource: { name: string; value: number }[];
+  countByCategory?: { name: string; value: number }[];
+  countByFundSource?: { name: string; value: number }[];
 }
 
 // --- Role-Based Access Control (RBAC) Types ---

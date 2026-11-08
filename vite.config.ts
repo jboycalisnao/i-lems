@@ -71,6 +71,11 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), smtpDevelopmentApi(env)],
+    resolve: {
+      alias: {
+        exceljs: 'exceljs/dist/exceljs.min.js'
+      }
+    },
     cacheDir: join(tmpdir(), 'ilems-vite-cache'),
     envPrefix: ['VITE_', 'SUPABASE_'],
     define: {

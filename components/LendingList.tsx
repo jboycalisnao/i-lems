@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { BorrowRecord, BorrowRequest } from '../types';
-import { Search, RotateCcw, CheckSquare, Square, ChevronDown, ChevronRight, Package, Trash2, AlertCircle, ShoppingBag, Layers, Box, User, Calendar } from 'lucide-react';
+import { Search, RotateCcw, CheckSquare, Square, ChevronDown, ChevronRight, Package, Trash2, AlertCircle, ShoppingBag, Layers, Box, User, Calendar, HandPlatter } from 'lucide-react';
 import { getCategoryIcon, getCategoryColor } from '../constants';
 
 interface LendingListProps {
@@ -12,9 +12,10 @@ interface LendingListProps {
   onReturnBulk: (recordIds: string[]) => void;
   onDelete: (recordId: string) => void;
   onDeleteBulk: (recordIds: string[]) => void;
+  onNewLoan?: () => void;
 }
 
-const LendingList: React.FC<LendingListProps> = ({ records, requests, onReturn, onReturnBulk, onDelete, onDeleteBulk }) => {
+const LendingList: React.FC<LendingListProps> = ({ records, requests, onReturn, onReturnBulk, onDelete, onDeleteBulk, onNewLoan }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const routeTab = location.pathname.split('/').filter(Boolean)[1];
@@ -178,21 +179,33 @@ const LendingList: React.FC<LendingListProps> = ({ records, requests, onReturn, 
                 />
             </div>
 
-            <div className="flex items-center gap-2 bg-gray-200/50 p-1 rounded-md border border-gray-200">
-                 <button
-                    onClick={() => navigate('/lending/by-item')}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'item' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                 >
-                     <Box className="w-4 h-4" />
-                     <span className="hidden sm:inline">By Item</span>
-                 </button>
-                 <button
-                    onClick={() => navigate('/lending/by-request')}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'request' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                 >
-                     <Layers className="w-4 h-4" />
-                     <span className="hidden sm:inline">By Request</span>
-                 </button>
+            <div className="flex items-center gap-2">
+              {onNewLoan && (
+                <button
+                  type="button"
+                  onClick={onNewLoan}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-bold shadow-xs transition-colors cursor-pointer"
+                >
+                  <HandPlatter className="w-4 h-4" />
+                  <span>New Loan</span>
+                </button>
+              )}
+              <div className="flex items-center gap-2 bg-gray-200/50 p-1 rounded-md border border-gray-200">
+                  <button
+                     onClick={() => navigate('/lending/by-item')}
+                     className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'item' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                      <Box className="w-4 h-4" />
+                      <span className="hidden sm:inline">By Item</span>
+                  </button>
+                  <button
+                     onClick={() => navigate('/lending/by-request')}
+                     className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'request' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                      <Layers className="w-4 h-4" />
+                      <span className="hidden sm:inline">By Request</span>
+                  </button>
+              </div>
             </div>
         </div>
         
@@ -349,7 +362,14 @@ const LendingList: React.FC<LendingListProps> = ({ records, requests, onReturn, 
                                                 <>
                                                     <td className="px-4 py-3">
                                                         <div className="font-medium text-gray-900 text-sm">{record.borrowerName}</div>
-                                                        <div className="text-xs text-gray-500">{record.borrowerId}</div>
+                                                        <div className="text-xs text-gray-500 flex items-center gap-2">
+                                                            <span>{record.borrowerId}</span>
+                                                            {record.specificId && (
+                                                                <span className="font-mono text-[10px] bg-amber-50 text-amber-900 border border-amber-200 px-1 py-0.5 rounded font-bold">
+                                                                    {record.specificId}
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                         {reqData && (
                                                             <div className="text-[10px] text-blue-600 font-mono mt-0.5 flex items-center gap-1">
                                                                 <span className="opacity-75">REF:</span> {reqData.code}
@@ -363,7 +383,14 @@ const LendingList: React.FC<LendingListProps> = ({ records, requests, onReturn, 
                                             ) : (
                                                 <>
                                                     <td className="px-4 py-3">
-                                                        <div className="font-medium text-gray-900 text-sm">{record.itemName}</div>
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <span className="font-medium text-gray-900 text-sm">{record.itemName}</span>
+                                                            {record.specificId && (
+                                                                <span className="font-mono text-[10px] bg-amber-50 text-amber-900 border border-amber-200 px-1.5 py-0.5 rounded font-bold">
+                                                                    {record.specificId}
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                         <div className="text-xs text-gray-500">{record.itemCategory}</div>
                                                     </td>
                                                     <td className="px-4 py-3 text-sm font-medium text-gray-700">

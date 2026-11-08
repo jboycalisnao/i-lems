@@ -11,7 +11,7 @@ import { ScannedLookupResult } from '../services/scannerLookupService';
 interface ScannedRecordModalProps {
   result: ScannedLookupResult | null;
   onClose: () => void;
-  onBorrow?: (item: InventoryItem, specificId?: string) => void;
+  onBorrow?: (item: InventoryItem | PropertyItem, specificId?: string) => void;
   onReturn?: (recordId: string) => void;
   onNavigate?: (path: string) => void;
   onPrintSticker?: (item: PropertyItem) => void;
@@ -99,7 +99,10 @@ export const ScannedRecordModal: React.FC<ScannedRecordModalProps> = ({
             const catColor = getCategoryColor(labItem.category);
             const availableQty = labItem.quantity - (labItem.borrowedQuantity || 0);
             const specificLoan = specificUnitId 
-              ? activeLoans.find(r => r.specificId?.trim().toUpperCase() === specificUnitId.trim().toUpperCase())
+              ? activeLoans.find(r => 
+                  r.specificId?.trim().toUpperCase() === specificUnitId.trim().toUpperCase() ||
+                  r.specificId?.split(',').map(s => s.trim().toUpperCase()).includes(specificUnitId.trim().toUpperCase())
+                )
               : undefined;
 
             return (
@@ -265,7 +268,7 @@ export const ScannedRecordModal: React.FC<ScannedRecordModalProps> = ({
                   <div className="flex items-center gap-2 flex-wrap">
                     {propertyItem.pisCode && (
                       <span className="inline-flex items-center gap-1 px-3 py-1 rounded-sm font-mono font-black text-xs bg-[#FFF000] text-black border border-black shadow-xs">
-                        <span className="w-2 h-2 rounded-full bg-red-600 inline-block animate-pulse"></span>
+                        <span className="w-2 h-2 rounded-full bg-red-600 inline-block"></span>
                         {propertyItem.pisCode}
                       </span>
                     )}
@@ -340,11 +343,24 @@ export const ScannedRecordModal: React.FC<ScannedRecordModalProps> = ({
                       onNavigate?.(`/property/list?search=${encodeURIComponent(propertyItem.propertyNumber)}`);
                       onClose();
                     }}
-                    className="px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-md text-xs font-bold transition-colors flex items-center gap-1.5 shadow-xs"
+                    className="px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-md text-xs font-bold transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
                     <span>View in Property Registry</span>
                   </button>
+
+                  {onBorrow && (
+                    <button
+                      onClick={() => {
+                        onBorrow(propertyItem, propertyItem.pisCode || propertyItem.propertyNumber);
+                        onClose();
+                      }}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <HandPlatter className="w-4 h-4" />
+                      <span>Borrow Property Asset</span>
+                    </button>
+                  )}
 
                   {onPrintCableTag && (
                     <button

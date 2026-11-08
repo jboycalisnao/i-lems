@@ -23,21 +23,87 @@ const isGenuineEmail = (str?: string | null): boolean => {
   return !!str && typeof str === 'string' && str.includes('@') && str.includes('.');
 };
 
+const consolidatePropertyItems = (props: any[], activeRecords: any[] = []): InventoryItem[] => {
+  const groups = new Map<string, {
+    primary: any;
+    totalQty: number;
+    borrowedQty: number;
+    locations: Set<string>;
+    pisCodes: string[];
+  }>();
+
+  props.forEach(p => {
+    const rawName = p.name ? p.name.trim() : '';
+    if (!rawName) return;
+    const key = rawName.toLowerCase();
+    const rowQty = Math.max(1, Number(p.quantity) || 1);
+
+    const isBorrowed = activeRecords.some(r => {
+      if (r.status !== 'Borrowed' && r.status !== 'Overdue') return false;
+      if (r.itemId === p.id) return true;
+      if (r.specificId) {
+        const parts = r.specificId.split(',').map((s: string) => s.trim().toUpperCase());
+        if (p.pisCode && parts.includes(p.pisCode.toUpperCase())) return true;
+        if (p.propertyNumber && parts.includes(p.propertyNumber.toUpperCase())) return true;
+      }
+      return false;
+    });
+
+    const borrowed = isBorrowed ? rowQty : 0;
+
+    const existing = groups.get(key);
+    if (!existing) {
+      groups.set(key, {
+        primary: p,
+        totalQty: rowQty,
+        borrowedQty: borrowed,
+        locations: new Set(p.location ? [p.location] : []),
+        pisCodes: p.pisCode ? [p.pisCode] : []
+      });
+    } else {
+      existing.totalQty += rowQty;
+      existing.borrowedQty += borrowed;
+      if (p.location) existing.locations.add(p.location);
+      if (p.pisCode) existing.pisCodes.push(p.pisCode);
+    }
+  });
+
+  return Array.from(groups.values()).map(g => ({
+    id: g.primary.id,
+    name: g.primary.name,
+    category: g.primary.category || 'Science Lab - Property & Apparatus',
+    quantity: g.totalQty,
+    unit: g.primary.unit || 'unit',
+    location: Array.from(g.locations).join(', ') || g.primary.location || 'Science Laboratory',
+    condition: g.primary.condition || 'Serviceable',
+    description: g.primary.description || '',
+    borrowedQuantity: g.borrowedQty,
+    shortId: g.primary.pisCode || g.primary.propertyNumber,
+    safetyNotes: g.primary.notes || '',
+    lastUpdated: g.primary.updatedAt || new Date().toISOString()
+  }));
+};
+
 const PublicRequestModal: React.FC<PublicRequestModalProps> = ({ onClose, initialLearner, initialEmail, isKioskMode = false }) => {
   // If prefilled with a learner, start directly at Step 2 (Select Equipment)
   const [step, setStep] = useState<1 | 2 | 3 | 4>(() => (initialLearner?.full_name ? 2 : 1));
-  // Instant 0ms pre-hydration from persistent offline cache
+  // Instant 0ms pre-hydration from persistent offline cache including Property Assets
   const [items, setItems] = useState<InventoryItem[]>(() => {
-    const cached = storage.getCachedItems();
-    return cached.filter(i => {
+    const cachedLab = storage.getCachedItems();
+    const cachedProp = propertyStorage.getCachedPropertyItems();
+    const activeRecords = storage.getCachedBorrowRecords();
+    const availableLab = cachedLab.filter(i => {
       const hasLimit = i.maxBorrowable !== undefined && i.maxBorrowable !== null;
       const limit = hasLimit ? i.maxBorrowable! : i.quantity;
       return (limit - (i.borrowedQuantity || 0)) > 0;
     });
+    const mappedProp = consolidatePropertyItems(cachedProp, activeRecords);
+    return [...availableLab, ...mappedProp];
   });
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(() => {
-    const cached = storage.getCachedItems();
-    const categories = Array.from(new Set(cached.map(i => i.category)));
+    const cachedLab = storage.getCachedItems();
+    const cachedProp = propertyStorage.getCachedPropertyItems();
+    const categories = Array.from(new Set([...cachedLab.map(i => i.category), ...cachedProp.map(p => p.category)]));
     return categories.length > 0 ? new Set([categories[0]]) : new Set();
   });
   const [isLoading, setIsLoading] = useState(false);
@@ -146,35 +212,60 @@ const PublicRequestModal: React.FC<PublicRequestModalProps> = ({ onClose, initia
 
     // 2. Check Property Management Items (PIS equipment, RFID Scanners, Laptops, Balances)
     const propItems = propertyStorage.getCachedPropertyItems();
+    const sameNameProps = propItems.filter(p => (p.name || '').trim().toLowerCase() === cleanName);
+    
+    if (sameNameProps.length > 0) {
+      const activeRecords = storage.getCachedBorrowRecords();
+      let totalQty = 0;
+      let borrowedCount = 0;
+
+      sameNameProps.forEach(p => {
+        const rowQty = Math.max(1, Number(p.quantity) || 1);
+        totalQty += rowQty;
+        const isBorrowed = activeRecords.some(r => {
+          if (r.status !== 'Borrowed' && r.status !== 'Overdue') return false;
+          if (r.itemId === p.id) return true;
+          if (r.specificId) {
+            const parts = r.specificId.split(',').map((s: string) => s.trim().toUpperCase());
+            if (p.pisCode && parts.includes(p.pisCode.toUpperCase())) return true;
+            if (p.propertyNumber && parts.includes(p.propertyNumber.toUpperCase())) return true;
+          }
+          return false;
+        });
+        if (isBorrowed) borrowedCount += rowQty;
+      });
+
+      const available = Math.max(0, totalQty - borrowedCount);
+      return {
+        available,
+        total: totalQty,
+        unit: sameNameProps[0].unit || 'unit',
+        borrowed: borrowedCount
+      };
+    }
+
     const matchedProp = propItems.find(p => 
       p.id === itemId ||
       (itemName && p.pisCode && itemName.includes(p.pisCode)) ||
       (itemName && p.propertyNumber && itemName.includes(p.propertyNumber)) ||
       (itemName && p.pisCodes && p.pisCodes.some(c => c && itemName.includes(c))) ||
-      (itemName && p.propertyNumbers && p.propertyNumbers.some(pn => pn && itemName.includes(pn))) ||
-      p.name.toLowerCase() === cleanName
+      (itemName && p.propertyNumbers && p.propertyNumbers.some(pn => pn && itemName.includes(pn)))
     );
 
     if (matchedProp) {
-      // If a specific physical unit barcode/PIS was targeted, quantity is strictly 1 unit
-      const isSpecificUnit = Boolean(
-        itemName && (
-          (matchedProp.pisCode && itemName.includes(matchedProp.pisCode)) ||
-          (matchedProp.propertyNumber && itemName.includes(matchedProp.propertyNumber)) ||
-          (matchedProp.pisCodes && matchedProp.pisCodes.some(c => c && itemName.includes(c)))
-        )
-      );
-
-      const propQty = isSpecificUnit ? 1 : Math.max(1, matchedProp.quantity || 1);
+      const propQty = Math.max(1, Number(matchedProp.quantity) || 1);
       const activeRecords = storage.getCachedBorrowRecords();
-      const borrowedCount = activeRecords.filter(r => 
-        (r.status === 'Borrowed' || r.status === 'Overdue') &&
-        (
-          r.itemId === matchedProp.id || 
-          (matchedProp.pisCode && (r.specificId === matchedProp.pisCode || r.itemName?.includes(matchedProp.pisCode)))
-        )
-      ).length;
-
+      const isBorrowed = activeRecords.some(r => {
+        if (r.status !== 'Borrowed' && r.status !== 'Overdue') return false;
+        if (r.itemId === matchedProp.id) return true;
+        if (r.specificId) {
+          const parts = r.specificId.split(',').map((s: string) => s.trim().toUpperCase());
+          if (matchedProp.pisCode && parts.includes(matchedProp.pisCode.toUpperCase())) return true;
+          if (matchedProp.propertyNumber && parts.includes(matchedProp.propertyNumber.toUpperCase())) return true;
+        }
+        return false;
+      });
+      const borrowedCount = isBorrowed ? propQty : 0;
       const available = Math.max(0, propQty - borrowedCount);
       return {
         available,
@@ -450,43 +541,32 @@ const PublicRequestModal: React.FC<PublicRequestModalProps> = ({ onClose, initia
 
 
   const loadInventory = async () => {
-    // 1. Check if we already have valid cached equipment; if so, hydrate without network request
-    const cached = storage.getCachedItems();
-    if (cached.length > 0) {
-      const availableItems = cached.filter(i => {
+    setIsLoading(true);
+    try {
+      const [labData, propData] = await Promise.all([
+        storage.getInventory().catch(() => storage.getCachedItems()),
+        propertyStorage.getPropertyItems().catch(() => propertyStorage.getCachedPropertyItems())
+      ]);
+
+      const availableLab = (labData || []).filter(i => {
         const hasLimit = i.maxBorrowable !== undefined && i.maxBorrowable !== null;
         const limit = hasLimit ? i.maxBorrowable! : i.quantity;
         return (limit - (i.borrowedQuantity || 0)) > 0;
       });
-      setItems(availableItems);
-      const categories = Array.from(new Set(availableItems.map(i => i.category)));
+
+      const activeRecords = storage.getCachedBorrowRecords();
+      const mappedProps = consolidatePropertyItems(propData || [], activeRecords);
+      const combined = [...availableLab, ...mappedProps];
+      setItems(combined);
+
+      const categories = Array.from(new Set(combined.map(i => i.category)));
       if (categories.length > 0) {
         setExpandedCategories(prev => (prev.size > 0 ? prev : new Set([categories[0]])));
       }
-      setIsLoading(false);
-      return;
-    }
-
-    // 2. Only if the cache is completely empty do we query the database
-    setIsLoading(true);
-    try {
-        const data = await storage.getInventory();
-        const availableItems = data.filter(i => {
-            const hasLimit = i.maxBorrowable !== undefined && i.maxBorrowable !== null;
-            const limit = hasLimit ? i.maxBorrowable! : i.quantity;
-            return (limit - (i.borrowedQuantity || 0)) > 0;
-        });
-        setItems(availableItems);
-        
-        // Auto-expand first category if available
-        const categories = Array.from(new Set(availableItems.map(i => i.category)));
-        if (categories.length > 0) {
-            setExpandedCategories(new Set([categories[0]]));
-        }
     } catch (e) {
-        console.error("Failed to load inventory", e);
+      console.error("Failed to load inventory in request modal", e);
     } finally {
-        setIsLoading(false);
+      setIsLoading(false);
     }
   };
 
@@ -634,12 +714,16 @@ const PublicRequestModal: React.FC<PublicRequestModalProps> = ({ onClose, initia
           return;
       }
 
+      const displayName = item.shortId && (item.shortId.startsWith('PIS') || item.shortId.startsWith('LNHS-PROP'))
+        ? `${item.name} [${item.shortId}]`
+        : item.name;
+
       setSelectedItems(prev => {
           const existing = prev.find(p => p.itemId === item.id);
           if (existing) {
               return prev.map(p => p.itemId === item.id ? { ...p, quantity: Math.min(stock.available, p.quantity + 1) } : p);
           }
-          return [...prev, { itemId: item.id, itemName: item.name, quantity: 1 }];
+          return [...prev, { itemId: item.id, itemName: displayName, quantity: 1 }];
       });
       triggerBucketAnimation(item.id);
   };

@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { InventoryItem, BorrowRecord, AppSettings, Category, BorrowRequest, AppUser, ROLE_DEFINITIONS } from './types';
+import { InventoryItem, PropertyItem, BorrowRecord, AppSettings, Category, BorrowRequest, AppUser, ROLE_DEFINITIONS } from './types';
 import * as storage from './services/storageService';
+import * as propertyStorage from './services/propertyStorageService';
 import * as sync from './services/syncService';
 import * as notifications from './services/notificationService';
 import * as userService from './services/userService';
@@ -70,17 +71,23 @@ const App: React.FC = () => {
   const [lastSynced, setLastSynced] = useState<Date>(new Date());
 
   const [items, setItems] = useState<InventoryItem[]>(() => storage.getCachedItems());
+  const [propertyItems, setPropertyItems] = useState<PropertyItem[]>(() => propertyStorage.getCachedPropertyItems());
   const [borrowRecords, setBorrowRecords] = useState<BorrowRecord[]>(() => storage.getCachedBorrowRecords());
   const [settings, setSettings] = useState<AppSettings | null>(() => storage.getCachedSettings());
   const [categories, setCategories] = useState<Category[]>(() => storage.getCachedCategories());
   const [requests, setRequests] = useState<BorrowRequest[]>(() => storage.getCachedBorrowRequests());
+  
+  // Count of pending borrow requests awaiting approval or rejection
+  const pendingRequestsCount = useMemo(() => {
+    return (requests || []).filter(r => r.status === 'Pending').length;
+  }, [requests]);
   
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | undefined>(undefined);
   const [qrItem, setQrItem] = useState<InventoryItem | undefined>(undefined);
   const [barcodeItem, setBarcodeItem] = useState<InventoryItem | undefined>(undefined);
   const [isBorrowModalOpen, setIsBorrowModalOpen] = useState(false);
-  const [preSelectedBorrowItem, setPreSelectedBorrowItem] = useState<InventoryItem | undefined>(undefined);
+  const [preSelectedBorrowItem, setPreSelectedBorrowItem] = useState<InventoryItem | PropertyItem | undefined>(undefined);
   const [borrowSpecificId, setBorrowSpecificId] = useState<string | undefined>(undefined);
   const [returnModalState, setReturnModalState] = useState<{ isOpen: boolean; record?: BorrowRecord; item?: InventoryItem }>({ isOpen: false });
 
@@ -109,10 +116,11 @@ const App: React.FC = () => {
           const loadedSettings = await storage.getSettings(forceRefresh);
           setSettings(loadedSettings);
 
-          const [inventorySnapshot, loadedCats, loadedRequests] = await Promise.all([
+          const [inventorySnapshot, loadedCats, loadedRequests, loadedProperties] = await Promise.all([
               storage.getInventorySnapshot(forceRefresh),
               storage.getCategories(forceRefresh),
-              storage.getBorrowRequests(forceRefresh)
+              storage.getBorrowRequests(forceRefresh),
+              propertyStorage.getPropertyItems(forceRefresh).catch(() => [])
           ]);
           const { items: loadedItems, borrowRecords: loadedRecords } = inventorySnapshot;
           
@@ -120,6 +128,9 @@ const App: React.FC = () => {
           setBorrowRecords(loadedRecords);
           setCategories(loadedCats);
           setRequests(loadedRequests);
+          if (Array.isArray(loadedProperties) && loadedProperties.length > 0) {
+              setPropertyItems(loadedProperties);
+          }
           setLastSynced(new Date());
           
           return true;
@@ -227,7 +238,8 @@ const App: React.FC = () => {
               status,
               returnDate,
               appName: settings.appName,
-              items
+              items,
+              logoUrl: settings.logoUrl
           });
 
           await notifications.sendEmail(settings, {
@@ -258,7 +270,7 @@ const App: React.FC = () => {
       </div>
   );
 
-  const openBorrowModal = (item?: InventoryItem, sId?: string) => {
+  const openBorrowModal = (item?: InventoryItem | PropertyItem, sId?: string) => {
       setPreSelectedBorrowItem(item);
       setBorrowSpecificId(sId);
       setIsBorrowModalOpen(true);
@@ -336,7 +348,7 @@ const App: React.FC = () => {
       );
   };
 
-  const handleBorrowConfirm = async (item: InventoryItem, bName: string, bId: string, qty: number, dDate: string, borrowerEmail?: string, sId?: string) => {
+  const handleBorrowConfirm = async (item: InventoryItem | PropertyItem, bName: string, bId: string, qty: number, dDate: string, borrowerEmail?: string, sId?: string) => {
     const result = await storage.borrowItem(item.id, bName, bId, qty, dDate, borrowerEmail, sId);
     if (result.success) {
         await refreshData(true).catch(() => {});
@@ -452,7 +464,25 @@ const App: React.FC = () => {
             <button onClick={() => setView('property')} title="Property Inventory: Equipment with Physical Property Stickers (PIS)" className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'property' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><Building2 className="w-5 h-5 flex-shrink-0" /><span>Property Inventory</span></button>
           )}
           {userService.canAccessView(currentUser, 'requests') && (
-            <button onClick={() => setView('requests')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'requests' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><Inbox className="w-5 h-5" /><span>Requests</span></button>
+            <button
+              onClick={() => setView('requests')}
+              className={`w-full flex items-center justify-between px-4 py-3 rounded-md transition-colors font-medium ${
+                view === 'requests' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <div className="flex items-center space-x-3 min-w-0">
+                <Inbox className="w-5 h-5 flex-shrink-0" />
+                <span className="truncate">Requests</span>
+              </div>
+              {pendingRequestsCount > 0 && (
+                <span
+                  title={`${pendingRequestsCount} new request${pendingRequestsCount > 1 ? 's' : ''} awaiting review`}
+                  className="px-2 py-0.5 text-xs font-bold rounded-sm bg-blue-600 text-white leading-tight shadow-xs flex-shrink-0"
+                >
+                  {pendingRequestsCount}
+                </span>
+              )}
+            </button>
           )}
           {userService.canAccessView(currentUser, 'scanner') && (
             <button onClick={() => setView('scanner')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-md transition-colors font-medium ${view === 'scanner' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}><ScanLine className="w-5 h-5" /><span>Scanner</span></button>
@@ -575,10 +605,10 @@ const App: React.FC = () => {
                     <Routes>
                         <Route path="/dashboard" element={<Dashboard items={items} borrowRecords={borrowRecords} />} />
                         <Route path="/inventory/*" element={<InventoryList items={items} categories={categories} onEdit={(item) => { setEditingItem(item); setIsFormOpen(true); }} onDelete={handleDelete} onShowQR={setQrItem} onPrintBarcodes={setBarcodeItem} onRefresh={() => refreshData(false, true)} />} />
-                        <Route path="/property/*" element={<PropertyManagement onRefreshParent={() => refreshData(true, true)} />} />
+                        <Route path="/property/*" element={<PropertyManagement onRefreshParent={() => refreshData(true, true)} onBorrow={(propItem) => openBorrowModal(propItem)} />} />
                         <Route path="/requests" element={<RequestsList onRefresh={() => refreshData(false, true)} />} />
                         <Route path="/scanner/*" element={<Scanner items={items} borrowRecords={borrowRecords} onBorrow={openBorrowModal} onReturn={initiateReturn} />} />
-                        <Route path="/lending/*" element={<LendingList records={borrowRecords} requests={requests} onReturn={initiateReturn} onReturnBulk={() => {}} onDelete={handleDeleteRecord} onDeleteBulk={handleDeleteRecordsBulk} />} />
+                        <Route path="/lending/*" element={<LendingList records={borrowRecords} requests={requests} onReturn={initiateReturn} onReturnBulk={() => {}} onDelete={handleDeleteRecord} onDeleteBulk={handleDeleteRecordsBulk} onNewLoan={() => openBorrowModal()} />} />
                         <Route path="/settings/*" element={settings ? <Settings settings={settings} onSave={storage.saveSettings} items={items} categories={categories} onCategoriesChange={() => refreshData(true, true)} /> : null} />
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />
                     </Routes>
@@ -594,6 +624,8 @@ const App: React.FC = () => {
         >
           {mobileNavigation.filter(nav => userService.canAccessView(currentUser, nav.view)).map(({ view: navView, label, icon: Icon }) => {
             const isActive = view === navView;
+            const isRequests = navView === 'requests';
+            const badgeCount = isRequests ? pendingRequestsCount : 0;
             return (
               <button
                 key={navView}
@@ -602,7 +634,17 @@ const App: React.FC = () => {
                 aria-current={isActive ? 'page' : undefined}
                 className={`h-16 min-w-0 px-1 flex flex-col items-center justify-center gap-1 text-[9px] font-semibold transition-colors ${isActive ? 'text-blue-700 bg-blue-50' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800'}`}
               >
-                <Icon className="w-5 h-5 flex-shrink-0" />
+                <div className="relative">
+                  <Icon className="w-5 h-5 flex-shrink-0" />
+                  {badgeCount > 0 && (
+                    <span
+                      title={`${badgeCount} new pending request${badgeCount > 1 ? 's' : ''}`}
+                      className="absolute -top-1 -right-2.5 min-w-[16px] h-4 px-1 text-[9px] font-bold bg-blue-600 text-white rounded-sm flex items-center justify-center leading-none shadow-xs"
+                    >
+                      {badgeCount}
+                    </span>
+                  )}
+                </div>
                 <span className="w-full truncate text-center">{label}</span>
               </button>
             );
@@ -613,7 +655,17 @@ const App: React.FC = () => {
       {isFormOpen && <InventoryForm initialData={editingItem} categories={categories} onSubmit={handleSave} onCancel={() => { setIsFormOpen(false); setEditingItem(undefined); }} />}
       {qrItem && <QRCodeModal item={qrItem} onClose={() => setQrItem(undefined)} />}
       {barcodeItem && <BulkBarcodeModal item={barcodeItem} onClose={() => setBarcodeItem(undefined)} />}
-      {isBorrowModalOpen && <BorrowModal availableItems={items} initialItem={preSelectedBorrowItem} specificId={borrowSpecificId} onConfirm={handleBorrowConfirm} onCancel={() => setIsBorrowModalOpen(false)} />}
+      {isBorrowModalOpen && (
+        <BorrowModal
+          availableItems={items}
+          propertyItems={propertyItems}
+          borrowRecords={borrowRecords}
+          initialItem={preSelectedBorrowItem}
+          specificId={borrowSpecificId}
+          onConfirm={handleBorrowConfirm}
+          onCancel={() => setIsBorrowModalOpen(false)}
+        />
+      )}
       {returnModalState.isOpen && returnModalState.record && <ReturnModal record={returnModalState.record} item={returnModalState.item} onConfirm={handleReturnConfirm} onCancel={() => setReturnModalState({ isOpen: false })} />}
       <ConfirmModal isOpen={confirmModal.isOpen} title={confirmModal.title} message={confirmModal.message} onConfirm={confirmModal.onConfirm} onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))} isDestructive={confirmModal.isDestructive} />
       

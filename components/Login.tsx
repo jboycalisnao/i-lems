@@ -409,7 +409,8 @@ const Login: React.FC<LoginProps> = ({
 
       const htmlBody = getPasswordResetTemplate({
           code: otp,
-          appName: appName || SYSTEM_NAME
+          appName: appName || SYSTEM_NAME,
+          logoUrl: settings.logoUrl
       });
       
       const body = `Your Password Reset Code is: ${otp}\n\n` + 

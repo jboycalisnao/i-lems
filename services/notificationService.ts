@@ -41,7 +41,8 @@ export const notifyAdminsOfNewRequest = async (settings: AppSettings, request: B
         referenceCode: request.referenceCode,
         returnDate: request.returnDate,
         items: request.items.map(i => ({ name: i.itemName, qty: i.quantity })),
-        appName: settings.appName
+        appName: settings.appName,
+        logoUrl: settings.logoUrl
     });
 
     return sendEmail(settings, {
@@ -66,7 +67,8 @@ export const notifyBorrowerOfRequestCopy = async (settings: AppSettings, request
         items: request.items.map(item => ({ name: item.itemName, qty: item.quantity })),
         appName: settings.appName,
         reservationDate: request.reservationDate,
-        reservationSlot: request.reservationSlot
+        reservationSlot: request.reservationSlot,
+        logoUrl: settings.logoUrl
     });
 
     return sendEmail(settings, {
@@ -89,7 +91,8 @@ export const notifyBorrowerOfStatusChange = async (settings: AppSettings, reques
         status,
         returnDate: request.returnDate,
         appName: settings.appName,
-        items: request.items.map(i => ({ name: i.itemName, qty: i.quantity }))
+        items: request.items.map(i => ({ name: i.itemName, qty: i.quantity })),
+        logoUrl: settings.logoUrl
     });
 
     return sendEmail(settings, {
@@ -110,7 +113,8 @@ export const notifyBorrowerOfOverdue = async (settings: AppSettings, record: Bor
         borrowerName: record.borrowerName,
         dueDate: record.dueDate,
         items: [{ name: record.itemName, qty: record.quantity }],
-        appName: settings.appName
+        appName: settings.appName,
+        logoUrl: settings.logoUrl
     });
 
     return sendEmail(settings, {

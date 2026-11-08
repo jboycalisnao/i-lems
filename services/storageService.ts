@@ -1,10 +1,19 @@
 
-import { InventoryItem, BorrowRecord, AppSettings, Category, ItemCondition, BorrowRequest, RequestStatus, BorrowStatus } from '../types';
+import { InventoryItem, PropertyItem, BorrowRecord, AppSettings, Category, ItemCondition, BorrowRequest, RequestStatus, BorrowStatus } from '../types';
 import { supabase } from '../supabaseClient';
 import { SYSTEM_NAME } from '../branding';
 import { LNHS_ACTUAL_LABORATORY_ITEMS } from '../data/lnhsActualEquipment';
 import { rememberLocation } from './locationService';
 import { deleteDDownloadFile } from './ddownloadService';
+import { getPropertyItems } from './propertyStorageService';
+import {
+    getLabInventoryFromDB,
+    setLabInventoryInDB,
+    upsertLabItemInDB,
+    deleteLabItemFromDB,
+    getBorrowRecordsFromDB,
+    setBorrowRecordsInDB
+} from './indexedDbService';
 
 const APP_ASSETS_BUCKET = 'app-assets';
 const APP_LOGO_PATH = 'branding/app-logo';
@@ -174,10 +183,18 @@ export const loadLocalInventoryItems = (): InventoryItem[] => {
 
 export const saveLocalInventoryItems = (items: InventoryItem[]): void => {
     if (typeof window === 'undefined') return;
+
+    // Asynchronously save to IndexedDB in background (zero main-thread freezing/lag)
+    setLabInventoryInDB(items).catch(err => {
+        console.warn('Failed to cache inventory items in IndexedDB', err);
+    });
+
+    // Lightweight non-blocking copy for localStorage fallback (all items without heavy attachments or boxes)
     try {
-        localStorage.setItem(INVENTORY_CACHE_KEY, JSON.stringify(items));
+        const lightweight = items.map(({ attachments: _, boxes: __, ...rest }) => rest);
+        localStorage.setItem(INVENTORY_CACHE_KEY, JSON.stringify(lightweight));
     } catch (e) {
-        console.warn('Failed to cache inventory items in localStorage', e);
+        console.warn('localStorage quota reached for lab inventory fallback:', e);
     }
 };
 
@@ -373,13 +390,28 @@ export const getInventorySnapshot = async (forceRefresh = false): Promise<{ item
         return memoryInventorySnapshot;
     }
 
-    // 2. Return local storage cache if available and not forcing refresh
+    // 2. Return IndexedDB cache if available and not forcing refresh (non-blocking, zero main-thread UI lag)
     if (!forceRefresh) {
+        try {
+            const dbItems = await getLabInventoryFromDB();
+            if (dbItems && dbItems.length > 0) {
+                const dbRecords = await getBorrowRecordsFromDB();
+                memoryInventorySnapshot = { items: dbItems, borrowRecords: dbRecords.length > 0 ? dbRecords : loadLocalBorrowRecords() };
+                lastInventoryFetchTime = now;
+                return memoryInventorySnapshot;
+            }
+        } catch (err) {
+            console.warn('IndexedDB lab inventory fetch error:', err);
+        }
+
+        // Fallback to localStorage if IndexedDB is not yet seeded
         const localItems = loadLocalInventoryItems();
         if (localItems.length > 0) {
             const localRecords = loadLocalBorrowRecords();
             memoryInventorySnapshot = { items: localItems, borrowRecords: localRecords };
             lastInventoryFetchTime = now;
+            setLabInventoryInDB(localItems).catch(console.warn);
+            setBorrowRecordsInDB(localRecords).catch(console.warn);
             return memoryInventorySnapshot;
         }
     }
@@ -575,7 +607,7 @@ export const saveItem = async (item: InventoryItem): Promise<{ success: boolean;
         rememberLocation(item.location);
     }
 
-    // Synchronize cache in-memory & localStorage immediately
+    // Synchronize cache in-memory & IndexedDB immediately
     if (memoryInventorySnapshot) {
         const idx = memoryInventorySnapshot.items.findIndex(i => i.id === item.id);
         if (idx >= 0) {
@@ -594,8 +626,36 @@ export const saveItem = async (item: InventoryItem): Promise<{ success: boolean;
         }
         saveLocalInventoryItems(local);
     }
+    upsertLabItemInDB(item).catch(console.warn);
 
     return { success: true };
+};
+
+export const saveInventoryItemsBulk = async (items: InventoryItem[]): Promise<{ success: boolean; count: number; errors?: string[] }> => {
+    if (!items || items.length === 0) return { success: true, count: 0 };
+    let count = 0;
+    const errors: string[] = [];
+    for (const item of items) {
+        try {
+            const res = await saveItem(item);
+            if (res.success) {
+                count++;
+            } else if (res.message) {
+                errors.push(`${item.name || 'Item'}: ${res.message}`);
+            }
+        } catch (err: any) {
+            errors.push(`${item.name || 'Item'}: ${err?.message || 'Failed to save'}`);
+        }
+    }
+    // Batch commit to IndexedDB
+    if (memoryInventorySnapshot?.items) {
+        setLabInventoryInDB(memoryInventorySnapshot.items).catch(console.warn);
+    }
+    return {
+        success: count > 0,
+        count,
+        errors: errors.length > 0 ? errors : undefined
+    };
 };
 
 export const deleteItem = async (id: string): Promise<boolean> => {
@@ -627,7 +687,8 @@ export const deleteItem = async (id: string): Promise<boolean> => {
     const { error } = await supabase.from('inventory_items').delete().eq('id', id);
     if (error) throw error;
 
-    // Remove from cache in-memory & localStorage immediately
+    // Remove from cache in-memory & IndexedDB immediately
+    deleteLabItemFromDB(id).catch(console.warn);
     if (memoryInventorySnapshot) {
         memoryInventorySnapshot.items = memoryInventorySnapshot.items.filter(i => i.id !== id);
         saveLocalInventoryItems(memoryInventorySnapshot.items);
@@ -774,13 +835,40 @@ export const syncOverdueStatus = async () => {
 };
 
 export const borrowItem = async (itemId: string, borrowerName: string, borrowerId: string, quantity: number, dueDate: string, borrowerEmail?: string, specificId?: string) => {
-    const { data: item, error: itemError } = await supabase.from('inventory_items').select('*').eq('id', itemId).single();
-    if (itemError || !item) return { success: false, message: "Equipment record not found." };
+    let item: any = null;
+    let isPropertyItem = false;
 
-    const newBorrowed = toNumber(item.borrowedQuantity) + toNumber(quantity);
+    // 1. Check laboratory inventory items
+    const { data: invItem } = await supabase.from('inventory_items').select('*').eq('id', itemId).maybeSingle();
+    if (invItem) {
+        item = invItem;
+    } else {
+        // 2. Check property items in database
+        const { data: propItem } = await supabase.from('property_items').select('*').eq('id', itemId).maybeSingle();
+        if (propItem) {
+            item = propItem;
+            isPropertyItem = true;
+        } else {
+            // 3. Fallback to cached/IndexedDB property items
+            const propList = await getPropertyItems().catch(() => []);
+            const found = propList.find(p => p.id === itemId);
+            if (found) {
+                item = found;
+                isPropertyItem = true;
+            }
+        }
+    }
 
-    const { error: updateError } = await supabase.from('inventory_items').update({ borrowedQuantity: newBorrowed }).eq('id', itemId);
-    if (updateError) return { success: false, message: updateError.message };
+    if (!item) return { success: false, message: "Equipment or property record not found." };
+
+    let newBorrowed = 0;
+    if (!isPropertyItem) {
+        newBorrowed = toNumber(item.borrowedQuantity) + toNumber(quantity);
+        const { error: updateError } = await supabase.from('inventory_items').update({ borrowedQuantity: newBorrowed }).eq('id', itemId);
+        if (updateError) return { success: false, message: updateError.message };
+    }
+
+    const resolvedSpecificId = specificId || (isPropertyItem ? (item.pisCode || item.propertyNumber) : undefined);
 
     const recordPayload: Record<string, any> = {
         id: crypto.randomUUID(),
@@ -794,7 +882,7 @@ export const borrowItem = async (itemId: string, borrowerName: string, borrowerI
         borrowDate: new Date().toISOString().split('T')[0],
         dueDate: dueDate,
         status: 'Borrowed',
-        specificId: specificId
+        specificId: resolvedSpecificId
     };
 
     let { error: recordError } = await supabase.from('borrow_records').insert(recordPayload);
@@ -806,7 +894,7 @@ export const borrowItem = async (itemId: string, borrowerName: string, borrowerI
     if (recordError && (recordError.message?.includes('specificId') || recordError.message?.includes('specific_id'))) {
         const altPayload = { ...recordPayload };
         delete altPayload.specificId;
-        if (specificId) altPayload.specific_id = specificId;
+        if (resolvedSpecificId) altPayload.specific_id = resolvedSpecificId;
         const retryAlt = await supabase.from('borrow_records').insert(altPayload);
         if (!retryAlt.error) {
             recordError = null;
@@ -821,12 +909,14 @@ export const borrowItem = async (itemId: string, borrowerName: string, borrowerI
 
     // Update in-memory snapshot and localStorage
     if (memoryInventorySnapshot) {
-        const itemIdx = memoryInventorySnapshot.items.findIndex(i => i.id === itemId);
-        if (itemIdx >= 0) {
-            memoryInventorySnapshot.items[itemIdx].borrowedQuantity = newBorrowed;
+        if (!isPropertyItem) {
+            const itemIdx = memoryInventorySnapshot.items.findIndex(i => i.id === itemId);
+            if (itemIdx >= 0) {
+                memoryInventorySnapshot.items[itemIdx].borrowedQuantity = newBorrowed;
+            }
+            saveLocalInventoryItems(memoryInventorySnapshot.items);
         }
         memoryInventorySnapshot.borrowRecords.unshift(mapBorrowRecord(recordPayload));
-        saveLocalInventoryItems(memoryInventorySnapshot.items);
         saveLocalBorrowRecords(memoryInventorySnapshot.borrowRecords);
     }
 
@@ -838,18 +928,38 @@ export const returnItem = async (recordId: string, details: { good: number; defe
     if (recError || !record) return { success: false, message: "Borrowing record not found." };
 
     const itemId = readField(record, 'itemid', 'itemId', 'item_id') || record.itemid;
-    const { data: item, error: itemError } = await supabase.from('inventory_items').select('*').eq('id', itemId).single();
-    if (itemError || !item) return { success: false, message: "Inventory record not found." };
+    const { data: item } = await supabase.from('inventory_items').select('*').eq('id', itemId).maybeSingle();
+    
+    if (item) {
+        const newBorrowed = Math.max(0, toNumber(item.borrowedQuantity) - toNumber(record.quantity));
+        const newTotal = Math.max(0, toNumber(item.quantity) - (toNumber(details.defective) + toNumber(details.disposed)));
 
-    const newBorrowed = Math.max(0, toNumber(item.borrowedQuantity) - toNumber(record.quantity));
-    const newTotal = Math.max(0, toNumber(item.quantity) - (toNumber(details.defective) + toNumber(details.disposed)));
+        const { error: itemUpdateError } = await supabase.from('inventory_items').update({
+            quantity: newTotal,
+            borrowedQuantity: newBorrowed
+        }).eq('id', item.id);
 
-    const { error: itemUpdateError } = await supabase.from('inventory_items').update({
-        quantity: newTotal,
-        borrowedQuantity: newBorrowed
-    }).eq('id', item.id);
+        if (itemUpdateError) return { success: false, message: itemUpdateError.message };
 
-    if (itemUpdateError) return { success: false, message: itemUpdateError.message };
+        if (memoryInventorySnapshot) {
+            const itemIdx = memoryInventorySnapshot.items.findIndex(i => i.id === item.id);
+            if (itemIdx >= 0) {
+                memoryInventorySnapshot.items[itemIdx].quantity = newTotal;
+                memoryInventorySnapshot.items[itemIdx].borrowedQuantity = newBorrowed;
+            }
+            saveLocalInventoryItems(memoryInventorySnapshot.items);
+        }
+    } else {
+        // If not in laboratory items, check if it's a property asset
+        const { data: propItem } = await supabase.from('property_items').select('*').eq('id', itemId).maybeSingle();
+        if (propItem) {
+            if (details.defective > 0) {
+                await supabase.from('property_items').update({ condition: 'Needs Repair' }).eq('id', itemId);
+            } else if (details.disposed > 0) {
+                await supabase.from('property_items').update({ condition: 'For Condemnation' }).eq('id', itemId);
+            }
+        }
+    }
 
     const { error: recordUpdateError } = await supabase.from('borrow_records').update({
         status: 'Returned',
@@ -860,17 +970,11 @@ export const returnItem = async (recordId: string, details: { good: number; defe
 
     // Update in-memory snapshot and localStorage
     if (memoryInventorySnapshot) {
-        const itemIdx = memoryInventorySnapshot.items.findIndex(i => i.id === item.id);
-        if (itemIdx >= 0) {
-            memoryInventorySnapshot.items[itemIdx].quantity = newTotal;
-            memoryInventorySnapshot.items[itemIdx].borrowedQuantity = newBorrowed;
-        }
         const recIdx = memoryInventorySnapshot.borrowRecords.findIndex(r => r.id === recordId);
         if (recIdx >= 0) {
             memoryInventorySnapshot.borrowRecords[recIdx].status = 'Returned';
             memoryInventorySnapshot.borrowRecords[recIdx].returnDate = new Date().toISOString().split('T')[0];
         }
-        saveLocalInventoryItems(memoryInventorySnapshot.items);
         saveLocalBorrowRecords(memoryInventorySnapshot.borrowRecords);
     }
 
@@ -1171,12 +1275,14 @@ export const processApprovedRequest = async (request: BorrowRequest) => {
     try {
         for (const reqItem of request.items) {
             let item: any = null;
+            let isPropertyItem = false;
+
             if (reqItem.itemId) {
-                const { data } = await supabase.from('inventory_items').select('*').eq('id', reqItem.itemId).single();
+                const { data } = await supabase.from('inventory_items').select('*').eq('id', reqItem.itemId).maybeSingle();
                 item = data;
             }
             if (!item && reqItem.itemName) {
-                const { data } = await supabase.from('inventory_items').select('*').ilike('name', reqItem.itemName).limit(1).single();
+                const { data } = await supabase.from('inventory_items').select('*').ilike('name', reqItem.itemName).limit(1).maybeSingle();
                 item = data;
             }
             if (!item) {
@@ -1184,12 +1290,43 @@ export const processApprovedRequest = async (request: BorrowRequest) => {
                 item = (allItems || []).find(i => i.id === reqItem.itemId || (i.name && reqItem.itemName && i.name.trim().toLowerCase() === reqItem.itemName.trim().toLowerCase()));
             }
 
-            if (!item) throw new Error(`Item "${reqItem.itemName}" not found in inventory.`);
+            // Fallback to property items if not found in inventory_items
+            if (!item) {
+                if (reqItem.itemId) {
+                    const { data: propData } = await supabase.from('property_items').select('*').eq('id', reqItem.itemId).maybeSingle();
+                    if (propData) {
+                        item = propData;
+                        isPropertyItem = true;
+                    }
+                }
+                if (!item && reqItem.itemName) {
+                    const cleanName = reqItem.itemName.replace(/\s*\[.*?\]\s*/g, '').trim();
+                    const { data: propData } = await supabase.from('property_items').select('*').ilike('name', cleanName).limit(1).maybeSingle();
+                    if (propData) {
+                        item = propData;
+                        isPropertyItem = true;
+                    }
+                }
+                if (!item) {
+                    const allProps = await getPropertyItems().catch(() => []);
+                    const foundProp = allProps.find(p => p.id === reqItem.itemId || (p.name && reqItem.itemName && (reqItem.itemName.includes(p.name) || p.name.toLowerCase() === reqItem.itemName.toLowerCase())));
+                    if (foundProp) {
+                        item = foundProp;
+                        isPropertyItem = true;
+                    }
+                }
+            }
 
-            const newBorrowed = toNumber(item.borrowedQuantity) + toNumber(reqItem.quantity);
-            await supabase.from('inventory_items').update({ borrowedQuantity: newBorrowed }).eq('id', item.id);
+            if (!item) throw new Error(`Item "${reqItem.itemName}" not found in inventory or property registry.`);
+
+            if (!isPropertyItem) {
+                const newBorrowed = toNumber(item.borrowedQuantity) + toNumber(reqItem.quantity);
+                await supabase.from('inventory_items').update({ borrowedQuantity: newBorrowed }).eq('id', item.id);
+            }
 
             const recordId = reqItem.linkedRecordId || crypto.randomUUID();
+            const resolvedSpecificId = item.pisCode || item.propertyNumber || (reqItem.itemName.match(/\[(.*?)\]/)?.[1]);
+
             const recordPayload: Record<string, any> = {
                 id: recordId,
                 itemid: item.id,
@@ -1201,7 +1338,8 @@ export const processApprovedRequest = async (request: BorrowRequest) => {
                 quantity: toNumber(reqItem.quantity),
                 borrowDate: new Date().toISOString().split('T')[0],
                 dueDate: request.returnDate,
-                status: 'Borrowed'
+                status: 'Borrowed',
+                specificId: resolvedSpecificId
             };
 
             let { error: insertError } = await supabase.from('borrow_records').insert(recordPayload);
@@ -1209,6 +1347,19 @@ export const processApprovedRequest = async (request: BorrowRequest) => {
                 const { borrowerEmail: _, ...fallbackPayload } = recordPayload;
                 const retry = await supabase.from('borrow_records').insert(fallbackPayload);
                 insertError = retry.error;
+            }
+            if (insertError && (insertError.message?.includes('specificId') || insertError.message?.includes('specific_id'))) {
+                const altPayload = { ...recordPayload };
+                delete altPayload.specificId;
+                if (resolvedSpecificId) altPayload.specific_id = resolvedSpecificId;
+                const retryAlt = await supabase.from('borrow_records').insert(altPayload);
+                if (!retryAlt.error) {
+                    insertError = null;
+                } else {
+                    delete altPayload.specific_id;
+                    const retryNone = await supabase.from('borrow_records').insert(altPayload);
+                    insertError = retryNone.error;
+                }
             }
 
             if (insertError) {

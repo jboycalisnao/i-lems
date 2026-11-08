@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useDeferredValue, useCallback } from 'react';
 import { PropertyItem, PropertyCondition, PropertyInventoryType } from '../types';
 import * as propertyStorage from '../services/propertyStorageService';
 import { supabase } from '../supabaseClient';
@@ -8,6 +8,8 @@ import PISBatchGeneratorModal from './PISBatchGeneratorModal';
 import CableStickerGeneratorModal from './CableStickerGeneratorModal';
 import QuickPISEncoderModal from './QuickPISEncoderModal';
 import ConfirmModal from './ConfirmModal';
+import { BulkInventoryModal } from './BulkInventoryModal';
+import { exportPropertyFullExcel, exportPropertyByNameExcel } from '../services/bulkImportService';
 import { toast } from '../context/ToastContext';
 import { Card } from './ui/Surface';
 import { getCategoryIcon, getCategoryColor } from '../constants';
@@ -44,7 +46,9 @@ import {
   MapPin,
   Check,
   X,
-  Eye
+  Eye,
+  Upload,
+  HandPlatter
 } from 'lucide-react';
 import {
   BarChart,
@@ -61,6 +65,7 @@ import {
 
 interface PropertyManagementProps {
   onRefreshParent?: () => void;
+  onBorrow?: (item: PropertyItem) => void;
 }
 
 const CATEGORY_COLORS = [
@@ -82,7 +87,370 @@ const CONDITION_BADGES: Record<PropertyCondition, { bg: string; text: string; bo
   'Disposed': { bg: 'bg-zinc-100', text: 'text-zinc-600', border: 'border-zinc-300', icon: Archive }
 };
 
-export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefreshParent }) => {
+interface PropertyTableRowProps {
+  item: PropertyItem;
+  showCategoryCol: boolean;
+  isGroupChild?: boolean;
+  unitIndex?: number;
+  totalGroupUnits?: number;
+  isSelected: boolean;
+  onToggleSelect: (id: string) => void;
+  onLinkPIS: (item: PropertyItem) => void;
+  onPrintSticker: (item: PropertyItem) => void;
+  onPrintCable: (propertyNumber: string) => void;
+  onEdit: (item: PropertyItem) => void;
+  onDelete: (id: string, name: string) => void;
+  onExportExcel?: (propertyName: string) => void;
+  onBorrow?: (item: PropertyItem) => void;
+}
+
+const PropertyTableRow = React.memo<PropertyTableRowProps>(function PropertyTableRow({
+  item,
+  showCategoryCol,
+  isGroupChild = false,
+  unitIndex,
+  totalGroupUnits,
+  isSelected,
+  onToggleSelect,
+  onLinkPIS,
+  onPrintSticker,
+  onPrintCable,
+  onEdit,
+  onDelete,
+  onExportExcel,
+  onBorrow
+}) {
+  const badge = CONDITION_BADGES[item.condition] || CONDITION_BADGES['Serviceable'];
+  const BadgeIcon = badge.icon;
+
+  return (
+    <tr
+      className={`hover:bg-blue-50/40 transition-colors ${
+        isGroupChild ? 'bg-blue-50/15 border-l-4 border-l-blue-400' : ''
+      } ${isSelected ? 'bg-blue-50/70' : ''}`}
+    >
+      <td className="px-2 py-2 text-center">
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={() => onToggleSelect(item.id)}
+          className="rounded-sm text-blue-600 focus:ring-blue-500 cursor-pointer"
+        />
+      </td>
+      <td className={`px-2.5 py-2 whitespace-nowrap ${isGroupChild ? 'pl-3' : ''}`}>
+        {item.pisCode ? (
+          <div className="inline-flex items-center gap-1.5 flex-wrap">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm font-mono font-black text-[10.5px] bg-[#FFF000] text-black border border-black shadow-2xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-600 inline-block"></span>
+              {item.pisCode}
+            </span>
+            {item.pisCodes && item.pisCodes.length > 1 && (
+              <span 
+                title={`Assigned multi-unit PIS stickers (${item.pisCodes.length} units):\n${item.pisCodes.join(', ')}`}
+                className="px-1.5 py-0.5 text-[9.5px] font-black bg-blue-100 text-blue-900 border border-blue-300 rounded-sm cursor-help whitespace-nowrap"
+              >
+                +{item.pisCodes.length - 1} PIS
+              </span>
+            )}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onLinkPIS(item)}
+            className="text-[10px] font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-dashed border-amber-300 px-2 py-0.5 rounded-sm transition-colors cursor-pointer"
+          >
+            + Link PIS
+          </button>
+        )}
+      </td>
+      <td className="px-2.5 py-2 font-mono font-bold text-blue-900 whitespace-nowrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span>{item.propertyNumber}</span>
+          {item.propertyNumbers && item.propertyNumbers.length > 1 && (
+            <span 
+              title={`Sequential Property Codes (${item.propertyNumbers.length} units):\n${item.propertyNumbers.join(', ')}`}
+              className="px-1.5 py-0.5 text-[9.5px] font-bold bg-blue-100 text-blue-900 border border-blue-300 rounded-sm cursor-help whitespace-nowrap"
+            >
+              +{item.propertyNumbers.length - 1} Codes
+            </span>
+          )}
+        </div>
+        {item.parNumber && (
+          <span className="block text-[10px] font-normal text-gray-400">
+            {item.parNumber}
+          </span>
+        )}
+      </td>
+      <td className="px-2.5 py-2 min-w-[140px] max-w-[220px]">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="font-bold text-gray-900 text-xs truncate" title={item.name}>{item.name}</span>
+          {isGroupChild && unitIndex !== undefined && totalGroupUnits !== undefined && (
+            <span className="px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-blue-100 text-blue-800 border border-blue-200 whitespace-nowrap">
+              Unit {unitIndex} of {totalGroupUnits}
+            </span>
+          )}
+        </div>
+        {item.description && (
+          <p className="text-[11px] text-gray-500 truncate" title={item.description}>
+            {item.description}
+          </p>
+        )}
+        {item.serialNumber && (
+          <span className="text-[10px] font-mono text-gray-400 block truncate" title={`SN: ${item.serialNumber}`}>
+            SN: {item.serialNumber}
+          </span>
+        )}
+      </td>
+      {showCategoryCol && (
+        <td className="px-2.5 py-2 whitespace-nowrap max-w-[140px]">
+          <span className="text-gray-700 font-medium truncate block" title={item.category}>{item.category}</span>
+          <span className="block text-[10px] text-gray-400 truncate">{item.inventoryType}</span>
+        </td>
+      )}
+      <td className="px-2 py-2 text-center whitespace-nowrap font-bold text-gray-800">
+        {item.quantity} {item.unit}
+      </td>
+      <td className="px-2.5 py-2 whitespace-nowrap text-gray-700 max-w-[120px] truncate" title={item.location}>
+        {item.location}
+      </td>
+      <td className="px-2.5 py-2 whitespace-nowrap font-medium text-gray-900 max-w-[130px] truncate" title={item.custodian}>
+        {item.custodian}
+      </td>
+      <td className="px-2.5 py-2 text-center whitespace-nowrap">
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-[10px] font-bold border ${badge.bg} ${badge.text} ${badge.border}`}>
+          <BadgeIcon className="w-3 h-3" />
+          {item.condition}
+        </span>
+      </td>
+      <td className="px-2.5 py-2 text-right whitespace-nowrap">
+        <div className="flex items-center justify-end space-x-1">
+          <button
+            type="button"
+            onClick={() => onPrintSticker(item)}
+            title="Print DepEd Property Sticker / Barcode"
+            className="p-1 text-blue-600 hover:bg-blue-50 rounded-sm transition-colors cursor-pointer"
+          >
+            <Tag className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onPrintCable(item.propertyNumber)}
+            title="Print Cable Peripheral Sticker (PIS Tag)"
+            className="p-1 text-amber-600 hover:bg-amber-50 rounded-sm transition-colors cursor-pointer"
+          >
+            <Cable className="w-4 h-4" />
+          </button>
+          {onExportExcel && (
+            <button
+              type="button"
+              onClick={() => onExportExcel(item.name)}
+              title={`Export all units of "${item.name}" to Excel (.xlsx)`}
+              className="p-1 text-emerald-600 hover:bg-emerald-50 rounded-sm transition-colors cursor-pointer"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+            </button>
+          )}
+          {onBorrow && (
+            <button
+              type="button"
+              onClick={() => onBorrow(item)}
+              title="Borrow Property Item"
+              className="p-1 text-blue-600 hover:bg-blue-50 rounded-sm transition-colors cursor-pointer"
+            >
+              <HandPlatter className="w-4 h-4" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onEdit(item)}
+            title="Edit Property Details"
+            className="p-1 text-gray-600 hover:bg-gray-100 rounded-sm transition-colors cursor-pointer"
+          >
+            <Edit2 className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(item.id, item.name)}
+            title="Delete Property Record"
+            className="p-1 text-red-600 hover:bg-red-50 rounded-sm transition-colors cursor-pointer"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+});
+
+interface PropertyCardProps {
+  item: PropertyItem;
+  onPrintSticker: (item: PropertyItem) => void;
+  onPrintCable: (propertyNumber: string) => void;
+  onEdit: (item: PropertyItem) => void;
+  onDelete: (id: string, name: string) => void;
+  onExportExcel?: (propertyName: string) => void;
+  onBorrow?: (item: PropertyItem) => void;
+}
+
+const PropertyCard = React.memo<PropertyCardProps>(function PropertyCard({
+  item,
+  onPrintSticker,
+  onPrintCable,
+  onEdit,
+  onDelete,
+  onExportExcel,
+  onBorrow
+}) {
+  const badge = CONDITION_BADGES[item.condition] || CONDITION_BADGES['Serviceable'];
+  const BadgeIcon = badge.icon;
+
+  return (
+    <Card className="p-5 border-gray-200 hover:shadow-lg transition-all duration-200 flex flex-col justify-between rounded-md bg-white">
+      <div>
+        {/* Top tag & condition */}
+        <div className="flex items-center justify-between mb-2 gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {item.pisCode && (
+              <span className="font-mono text-[10.5px] font-black bg-[#FFF000] text-black border border-black px-2 py-0.5 rounded-sm shadow-xs flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-600 inline-block"></span>
+                {item.pisCode}
+              </span>
+            )}
+            {item.pisCodes && item.pisCodes.length > 1 && (
+              <span 
+                title={`Assigned multi-unit PIS stickers (${item.pisCodes.length} units):\n${item.pisCodes.join(', ')}`}
+                className="px-1.5 py-0.5 text-[10px] font-black bg-blue-100 text-blue-900 border border-blue-300 rounded-sm cursor-help whitespace-nowrap"
+              >
+                +{item.pisCodes.length - 1} PIS
+              </span>
+            )}
+            <span className="font-mono text-xs font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded-sm border border-blue-200 inline-flex items-center gap-1">
+              <span>{item.propertyNumber}</span>
+              {item.propertyNumbers && item.propertyNumbers.length > 1 && (
+                <span 
+                  title={`Sequential Property Codes (${item.propertyNumbers.length} units):\n${item.propertyNumbers.join(', ')}`}
+                  className="text-[10px] font-bold text-blue-700 bg-blue-100 px-1 rounded cursor-help"
+                >
+                  +{item.propertyNumbers.length - 1}
+                </span>
+              )}
+            </span>
+          </div>
+          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-[10px] font-bold border ${badge.bg} ${badge.text} ${badge.border} flex-shrink-0`}>
+            <BadgeIcon className="w-3 h-3" />
+            {item.condition}
+          </span>
+        </div>
+
+        {/* Title and specs with Avatar thumbnail */}
+        <div className="flex items-start gap-3 my-2">
+          {item.imageUrl ? (
+            <div className="w-12 h-12 rounded-md border border-gray-200 bg-white overflow-hidden flex-shrink-0 shadow-2xs">
+              <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
+            </div>
+          ) : (
+            <div className="w-12 h-12 rounded-md border border-gray-200 bg-gray-50 flex items-center justify-center flex-shrink-0 text-gray-400">
+              <Building2 className="w-5 h-5 text-gray-400" />
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <h4 className="font-bold text-gray-900 text-sm leading-snug line-clamp-1">{item.name}</h4>
+            <p className="text-xs text-gray-500 line-clamp-2 mt-0.5">{item.description || 'No detailed specifications recorded.'}</p>
+          </div>
+        </div>
+
+        {/* Metadata grid */}
+        <div className="grid grid-cols-2 gap-2 text-[11px] bg-gray-50 p-2.5 rounded-md border border-gray-100 mb-3">
+          <div>
+            <span className="text-gray-400 block text-[9px] font-bold uppercase">Category</span>
+            <span className="font-medium text-gray-800 truncate block">{item.category}</span>
+          </div>
+          <div>
+            <span className="text-gray-400 block text-[9px] font-bold uppercase">Quantity</span>
+            <span className="font-bold text-gray-800">{item.quantity} {item.unit}</span>
+          </div>
+          <div>
+            <span className="text-gray-400 block text-[9px] font-bold uppercase">Location</span>
+            <span className="font-medium text-gray-800 truncate block">{item.location}</span>
+          </div>
+          <div>
+            <span className="text-gray-400 block text-[9px] font-bold uppercase">Classification</span>
+            <span className="font-medium text-gray-800 truncate block">{item.inventoryType}</span>
+          </div>
+        </div>
+
+        {/* Custodian tag */}
+        <div className="flex items-center space-x-1.5 text-xs text-gray-600 mb-2">
+          <UserCheck className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+          <span className="truncate"><strong>Custodian:</strong> {item.custodian}</span>
+        </div>
+      </div>
+
+      {/* Card Footer Actions */}
+      <div className="pt-3 border-t border-gray-100 flex items-center justify-between mt-2">
+        <span className="text-[10px] font-medium text-gray-400">
+          Fund: {item.sourceOfFund.split('(')[0]}
+        </span>
+        <div className="flex items-center space-x-1">
+          <button
+            type="button"
+            onClick={() => onPrintSticker(item)}
+            title="Print Property Sticker Tag"
+            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-sm transition-colors cursor-pointer"
+          >
+            <Tag className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onPrintCable(item.propertyNumber)}
+            title="Print Cable Peripheral Sticker (PIS Tag)"
+            className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-sm transition-colors cursor-pointer"
+          >
+            <Cable className="w-4 h-4" />
+          </button>
+          {onExportExcel && (
+            <button
+              type="button"
+              onClick={() => onExportExcel(item.name)}
+              title={`Export all units of "${item.name}" to Excel (.xlsx)`}
+              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-sm transition-colors cursor-pointer"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+            </button>
+          )}
+          {onBorrow && (
+            <button
+              type="button"
+              onClick={() => onBorrow(item)}
+              title="Borrow Property Item"
+              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-sm transition-colors cursor-pointer"
+            >
+              <HandPlatter className="w-4 h-4" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onEdit(item)}
+            title="Edit Record"
+            className="p-1.5 text-gray-600 hover:bg-gray-100 rounded-sm transition-colors cursor-pointer"
+          >
+            <Edit2 className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(item.id, item.name)}
+            title="Delete"
+            className="p-1.5 text-red-600 hover:bg-red-50 rounded-sm transition-colors cursor-pointer"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+});
+
+export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefreshParent, onBorrow }) => {
   const [items, setItems] = useState<PropertyItem[]>(() => propertyStorage.getCachedPropertyItems());
   const [isLoading, setIsLoading] = useState(() => propertyStorage.getCachedPropertyItems().length === 0);
   const [isCloudConnected, setIsCloudConnected] = useState<boolean | null>(null);
@@ -90,6 +458,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
 
   // Search & Filter State
   const [searchTerm, setSearchTerm] = useState('');
+  const deferredSearchTerm = useDeferredValue(searchTerm);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedLocation, setSelectedLocation] = useState<string>('All');
   const [selectedCondition, setSelectedCondition] = useState<string>('All');
@@ -97,16 +466,24 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
   const [selectedType, setSelectedType] = useState<string>('All');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
   const [viewGrouping, setViewGrouping] = useState<'category' | 'flat'>('category');
+  const [flatPage, setFlatPage] = useState(1);
+  const itemsPerPage = 50;
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<'name' | 'propertyNumber' | 'totalValue' | 'date'>('name');
   const [sortAsc, setSortAsc] = useState(true);
   const [groupSameNames, setGroupSameNames] = useState<boolean>(true);
-  const [collapsedNameGroups, setCollapsedNameGroups] = useState<Set<string>>(new Set());
+  const [expandedNameGroups, setExpandedNameGroups] = useState<Set<string>>(new Set());
+
+  // Reset flatPage when filters change
+  useEffect(() => {
+    setFlatPage(1);
+  }, [deferredSearchTerm, selectedCategory, selectedLocation, selectedCondition, selectedFundSource, selectedType, sortField, sortAsc]);
 
   // DepEd Inventory Report State (Location / Cabinet generation)
   const [reportLocation, setReportLocation] = useState<string>('All');
   const [reportGrouping, setReportGrouping] = useState<'by-location' | 'flat'>('by-location');
   const [reportSearchTerm, setReportSearchTerm] = useState<string>('');
+  const deferredReportSearchTerm = useDeferredValue(reportSearchTerm);
 
   // Searchable Location / Cabinet Dropdown State
   const [isReportLocDropdownOpen, setIsReportLocDropdownOpen] = useState(false);
@@ -138,6 +515,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
 
   // Modals
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<PropertyItem | undefined>(undefined);
   const [stickerItem, setStickerItem] = useState<PropertyItem | undefined>(undefined);
   const [isBatchPISOpen, setIsBatchPISOpen] = useState(false);
@@ -175,6 +553,34 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
   const [selectedPrintCabinetLocation, setSelectedPrintCabinetLocation] = useState<string>('All');
   const [printPageBreakPerCabinet, setPrintPageBreakPerCabinet] = useState(true);
 
+  // Export Menu & Modal State
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+  const [isExportByNameModalOpen, setIsExportByNameModalOpen] = useState(false);
+  const [exportByNameSearchTerm, setExportByNameSearchTerm] = useState('');
+
+  // Close export menu on click outside
+  useEffect(() => {
+    if (!isExportMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setIsExportMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isExportMenuOpen]);
+
+  // Close export by name modal on Escape key
+  useEffect(() => {
+    if (!isExportByNameModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsExportByNameModalOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isExportByNameModalOpen]);
+
   // Close print cabinet modal on Escape key
   useEffect(() => {
     if (!isPrintCabinetModalOpen) return;
@@ -200,7 +606,12 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
     if (showSpinner && items.length === 0) setIsLoading(true);
     try {
       const data = await propertyStorage.getPropertyItems(forceRefresh);
-      setItems(data);
+      setItems(prev => {
+        if (prev.length === data.length && prev.length > 0 && prev[0]?.id === data[0]?.id && prev[prev.length - 1]?.id === data[data.length - 1]?.id) {
+          return prev;
+        }
+        return data;
+      });
       setIsCloudConnected(Boolean(supabase && typeof supabase.from === 'function'));
     } catch (e) {
       console.error('Failed to load property items from cloud', e);
@@ -211,10 +622,18 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
   };
 
   useEffect(() => {
-    // If cache is empty, query Supabase on first mount; otherwise use cached data with zero delay!
+    // 1. Asynchronously hydrate from IndexedDB if state is not yet populated
     if (items.length === 0) {
-      loadData(true, false);
+      propertyStorage.getPropertyInventoryFromDB().then(dbItems => {
+        if (dbItems && dbItems.length > 0) {
+          setItems(prev => (prev.length === 0 ? dbItems : prev));
+          setIsLoading(false);
+        }
+      }).catch(console.warn);
     }
+
+    // 2. Normal load using IndexedDB/memory cache (will NOT reload or re-fetch from network on every reload)
+    loadData(items.length === 0, false);
 
     // Subscribe to realtime database changes from Supabase
     if (supabase && typeof supabase.channel === 'function') {
@@ -251,6 +670,23 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
     );
   }, [items]);
 
+  // Pre-calculate category & location counts in a single O(N) pass for fast filter rendering
+  const { categoryCounts, locationCounts } = useMemo(() => {
+    const catMap = new Map<string, number>();
+    const locMap = new Map<string, number>();
+    for (const item of items) {
+      if (item.category) {
+        catMap.set(item.category, (catMap.get(item.category) || 0) + 1);
+      }
+      if (item.location?.trim()) {
+        const loc = item.location.trim();
+        locMap.set(loc, (locMap.get(loc) || 0) + 1);
+        locMap.set(loc.toLowerCase(), (locMap.get(loc.toLowerCase()) || 0) + 1);
+      }
+    }
+    return { categoryCounts: catMap, locationCounts: locMap };
+  }, [items]);
+
   // Map property items by distinct cabinet / location
   const propertyItemsByLocation = useMemo(() => {
     const map = new Map<string, PropertyItem[]>();
@@ -281,27 +717,27 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
 
   // Filter and sort items
   const filteredItems = useMemo(() => {
+    const q = deferredSearchTerm.toLowerCase().trim();
     return items.filter(item => {
-      const q = searchTerm.toLowerCase().trim();
-      const matchesSearch = !q ||
-        item.name.toLowerCase().includes(q) ||
-        item.propertyNumber.toLowerCase().includes(q) ||
-        (item.propertyNumbers && item.propertyNumbers.some(p => p && p.toLowerCase().includes(q))) ||
+      if (selectedCategory !== 'All' && item.category !== selectedCategory) return false;
+      if (selectedLocation !== 'All' && item.location !== selectedLocation) return false;
+      if (selectedCondition !== 'All' && item.condition !== selectedCondition) return false;
+      if (selectedFundSource !== 'All' && item.sourceOfFund !== selectedFundSource) return false;
+      if (selectedType !== 'All' && item.inventoryType !== selectedType) return false;
+      if (!q) return true;
+
+      return (
+        (item.name && item.name.toLowerCase().includes(q)) ||
+        (item.propertyNumber && item.propertyNumber.toLowerCase().includes(q)) ||
         (item.pisCode && item.pisCode.toLowerCase().includes(q)) ||
-        (item.pisCodes && item.pisCodes.some(c => c && c.toLowerCase().includes(q))) ||
+        (item.location && item.location.toLowerCase().includes(q)) ||
+        (item.custodian && item.custodian.toLowerCase().includes(q)) ||
         (item.serialNumber && item.serialNumber.toLowerCase().includes(q)) ||
-        item.location.toLowerCase().includes(q) ||
-        item.custodian.toLowerCase().includes(q) ||
+        (item.category && item.category.toLowerCase().includes(q)) ||
         (item.parNumber && item.parNumber.toLowerCase().includes(q)) ||
-        item.category.toLowerCase().includes(q);
-
-      const matchesCat = selectedCategory === 'All' || item.category === selectedCategory;
-      const matchesLoc = selectedLocation === 'All' || item.location === selectedLocation;
-      const matchesCond = selectedCondition === 'All' || item.condition === selectedCondition;
-      const matchesFund = selectedFundSource === 'All' || item.sourceOfFund === selectedFundSource;
-      const matchesType = selectedType === 'All' || item.inventoryType === selectedType;
-
-      return matchesSearch && matchesCat && matchesLoc && matchesCond && matchesFund && matchesType;
+        (item.propertyNumbers && item.propertyNumbers.some(p => p && p.toLowerCase().includes(q))) ||
+        (item.pisCodes && item.pisCodes.some(c => c && c.toLowerCase().includes(q)))
+      );
     }).sort((a, b) => {
       let result = 0;
       if (sortField === 'name') result = a.name.localeCompare(b.name);
@@ -310,25 +746,29 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
       else if (sortField === 'date') result = (a.acquisitionDate || '').localeCompare(b.acquisitionDate || '');
       return sortAsc ? result : -result;
     });
-  }, [items, searchTerm, selectedCategory, selectedLocation, selectedCondition, selectedFundSource, selectedType, sortField, sortAsc]);
+  }, [items, deferredSearchTerm, selectedCategory, selectedLocation, selectedCondition, selectedFundSource, selectedType, sortField, sortAsc]);
 
   // Filtered Items specifically for DepEd Inventory Report by location/cabinet and report search
   const reportFilteredItems = useMemo(() => {
+    const q = deferredReportSearchTerm.toLowerCase().trim();
+    const locLower = reportLocation.trim().toLowerCase();
+    const isAllLoc = reportLocation === 'All';
+
     return items.filter(item => {
-      const locMatch = reportLocation === 'All' || (item.location || '').trim().toLowerCase() === reportLocation.trim().toLowerCase();
-      const q = reportSearchTerm.toLowerCase().trim();
-      const searchMatch = !q ||
-        item.name.toLowerCase().includes(q) ||
-        item.propertyNumber.toLowerCase().includes(q) ||
-        (item.propertyNumbers && item.propertyNumbers.some(p => p && p.toLowerCase().includes(q))) ||
+      if (!isAllLoc && (item.location || '').trim().toLowerCase() !== locLower) return false;
+      if (!q) return true;
+      return (
+        (item.name && item.name.toLowerCase().includes(q)) ||
+        (item.propertyNumber && item.propertyNumber.toLowerCase().includes(q)) ||
         (item.pisCode && item.pisCode.toLowerCase().includes(q)) ||
         (item.serialNumber && item.serialNumber.toLowerCase().includes(q)) ||
-        item.location.toLowerCase().includes(q) ||
-        item.custodian.toLowerCase().includes(q) ||
-        item.category.toLowerCase().includes(q);
-      return locMatch && searchMatch;
+        (item.location && item.location.toLowerCase().includes(q)) ||
+        (item.custodian && item.custodian.toLowerCase().includes(q)) ||
+        (item.category && item.category.toLowerCase().includes(q)) ||
+        (item.propertyNumbers && item.propertyNumbers.some(p => p && p.toLowerCase().includes(q)))
+      );
     }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [items, reportLocation, reportSearchTerm]);
+  }, [items, reportLocation, deferredReportSearchTerm]);
 
   // Group items by location/cabinet for report generation
   const reportLocationsGrouped = useMemo(() => {
@@ -352,6 +792,68 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
   const reportTotalValuation = useMemo(() => {
     return reportFilteredItems.reduce((sum, item) => sum + (item.totalValue || item.quantity * item.unitValue), 0);
   }, [reportFilteredItems]);
+
+  // Distinct property summaries for name-based export
+  const distinctPropertySummaries = useMemo(() => {
+    const map = new Map<string, { name: string; category: string; count: number; totalValue: number }>();
+    items.forEach(i => {
+      const trimmed = (i.name || '').trim();
+      if (!trimmed) return;
+      const lower = trimmed.toLowerCase();
+      const existing = map.get(lower);
+      const val = (i.unitValue || 0) * (i.quantity || 1);
+      if (existing) {
+        existing.count += (i.quantity || 1);
+        existing.totalValue += val;
+      } else {
+        map.set(lower, {
+          name: trimmed,
+          category: i.category || 'General',
+          count: i.quantity || 1,
+          totalValue: val
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [items]);
+
+  const filteredExportProperties = useMemo(() => {
+    const q = (exportByNameSearchTerm || '').trim().toLowerCase();
+    if (!q) return distinctPropertySummaries;
+    return distinctPropertySummaries.filter(p =>
+      p.name.toLowerCase().includes(q) ||
+      p.category.toLowerCase().includes(q)
+    );
+  }, [distinctPropertySummaries, exportByNameSearchTerm]);
+
+  // Export handlers
+  const handleExportByName = useCallback(async (propertyName: string) => {
+    try {
+      await exportPropertyByNameExcel(propertyName, items);
+      toast.success(`Exported Excel file for "${propertyName}"`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to export Excel');
+    }
+  }, [items]);
+
+  const handleExportAll = useCallback(async () => {
+    try {
+      await exportPropertyFullExcel(items);
+      toast.success(`Exported all ${items.length} property items to Excel`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to export Excel');
+    }
+  }, [items]);
+
+  const handleExportFiltered = useCallback(async () => {
+    try {
+      const date = new Date().toISOString().split('T')[0];
+      await exportPropertyFullExcel(filteredItems, `LNHS_Property_Filtered_${date}.xlsx`, 'Filtered Registry');
+      toast.success(`Exported ${filteredItems.length} filtered items to Excel`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to export Excel');
+    }
+  }, [filteredItems]);
 
   // Handlers
   const handleSaveItem = async (item: PropertyItem) => {
@@ -788,7 +1290,10 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
 
     const isSingle = locationsToPrint.length === 1;
     const singleLocName = isSingle ? locationsToPrint[0] : '';
-    const totalEquipmentArticles = locationsToPrint.reduce((acc, loc) => acc + (propertyItemsByLocation.get(loc)?.length || 0), 0);
+    const totalEquipmentArticles = locationsToPrint.reduce((acc, loc) => {
+      const locItems = propertyItemsByLocation.get(loc) || [];
+      return acc + groupItemsByName(locItems).length;
+    }, 0);
     const totalEquipmentUnits = locationsToPrint.reduce((acc, loc) => {
       const locItems = propertyItemsByLocation.get(loc) || [];
       return acc + locItems.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
@@ -810,11 +1315,14 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
 
     const headerHtml = (locName?: string) => `
       <div class="deped-header">
-        <div class="deped-sub">Republic of the Philippines</div>
-        <div class="deped-dept">DEPARTMENT OF EDUCATION</div>
-        <div class="deped-div">Region VI - Western Visayas • Division of Iloilo • District of Leon</div>
-        <div class="school-name">LEON NATIONAL HIGH SCHOOL</div>
-        <div class="lab-sub">SCIENCE LABORATORY • PROPERTY & EQUIPMENT REGISTRY</div>
+        <div class="header-main-row">
+          <div class="header-side-logo left-logo-box">
+            <img src="${window.location.origin}/img/Lab-Logo.png" class="header-logo-img lab-logo-img" alt="Jang Yeong-Sil Science Laboratory" />
+          </div>
+          <div class="header-side-logo right-logo-box">
+            <img src="${window.location.origin}/img/Tri-Logo.png" class="header-logo-img tri-logo-img" alt="Leon NHS Science Department" />
+          </div>
+        </div>
         <div class="doc-title">PHYSICAL INVENTORY LIST PER CABINET / STORAGE LOCATION</div>
         ${locName ? `<div class="cabinet-scope-pill">STORAGE LOCATION: ${escape(locName)}</div>` : ''}
       </div>
@@ -838,13 +1346,15 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
       const cabinetQty = locItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
       const isLast = index === locationsToPrint.length - 1;
 
+      const groupedCabinetItems = groupItemsByName(locItems);
+
       let sectionHtml = '';
       if (pageBreak && !isSingle) {
         sectionHtml += headerHtml(locKey);
         sectionHtml += `
           <div class="print-meta-bar">
             <div><strong>Location:</strong> ${escape(locKey)}</div>
-            <div><strong>Articles:</strong> ${locItems.length} | <strong>Units:</strong> ${cabinetQty}</div>
+            <div><strong>Articles:</strong> ${groupedCabinetItems.length} | <strong>Units:</strong> ${cabinetQty}</div>
             <div><strong>Date:</strong> ${new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
           </div>
         `;
@@ -854,44 +1364,94 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
         <div class="cabinet-block ${pageBreak && !isLast ? 'page-break-after' : ''}">
           <div class="cabinet-banner">
             <span class="cabinet-title">LOCATION: ${escape(locKey).toUpperCase()}</span>
-            <span class="cabinet-meta">${locItems.length} Property Articles • ${cabinetQty} Total Units</span>
+            <span class="cabinet-meta">${groupedCabinetItems.length} Equipment Articles • ${cabinetQty} Total Units</span>
           </div>
 
           <table class="inventory-table">
             <thead>
               <tr>
                 <th style="width: 5%; text-align: center;">#</th>
-                <th style="width: 18%;">Property / PIS Tag</th>
-                <th style="width: 38%;">Equipment / Apparatus Description</th>
+                <th style="width: 22%;">Property / PIS Tag</th>
+                <th style="width: 36%;">Equipment / Apparatus Description</th>
                 <th style="width: 17%;">Category</th>
-                <th style="width: 9%; text-align: center;">Qty</th>
-                <th style="width: 13%; text-align: center;">Condition</th>
+                <th style="width: 8%; text-align: center;">Qty</th>
+                <th style="width: 12%; text-align: center;">Condition</th>
               </tr>
             </thead>
             <tbody>
-              ${locItems.length === 0 ? `
+              ${groupedCabinetItems.length === 0 ? `
                 <tr>
                   <td colspan="6" style="text-align: center; padding: 16px; color: #64748b; font-style: italic;">
                     No property equipment currently listed in this cabinet / storage location.
                   </td>
                 </tr>
-              ` : locItems.map((item, itemIdx) => `
-                <tr>
-                  <td style="text-align: center; color: #475569; font-weight: bold;">${itemIdx + 1}</td>
-                  <td>
-                    <div style="font-family: monospace; font-weight: bold; color: #1e3a8a;">${escape(item.propertyNumber)}</div>
-                    ${item.pisCode ? `<div style="display: inline-block; font-family: monospace; font-weight: 900; font-size: 7pt; background: #fffbeb; color: #000; border: 1px solid #d97706; padding: 0 4px; border-radius: 2px; margin-top: 1px;">${escape(item.pisCode)}</div>` : ''}
-                  </td>
-                  <td>
-                    <div class="item-name">${escape(item.name)}</div>
-                    ${item.description ? `<div class="item-desc">${escape(item.description)}</div>` : ''}
-                    ${item.serialNumber ? `<div style="font-family: monospace; font-size: 7pt; color: #64748b; margin-top: 1px;">SN: ${escape(item.serialNumber)}</div>` : ''}
-                  </td>
-                  <td class="item-cat">${escape(item.category || 'General Property')}</td>
-                  <td style="text-align: center;" class="item-qty">${item.quantity} ${escape(item.unit || 'unit')}</td>
-                  <td style="text-align: center;" class="item-cond">${escape(item.condition || 'Serviceable')}</td>
-                </tr>
-              `).join('')}
+              ` : groupedCabinetItems.map((group, groupIdx) => {
+                const primary = group.items[0];
+                const qty = group.totalQty;
+                const unit = primary.unit || 'unit';
+
+                // Format Property Numbers compactly without repeating individual numbers
+                const propNums = group.items.map(i => i.propertyNumber).filter(Boolean);
+                let propDisplay = '';
+                if (propNums.length <= 1) {
+                  propDisplay = escape(propNums[0] || primary.propertyNumber);
+                } else {
+                  const first = propNums[0];
+                  const last = propNums[propNums.length - 1];
+                  const firstParts = first.split('-');
+                  const lastParts = last.split('-');
+                  const firstLastNum = firstParts[firstParts.length - 1];
+                  const lastLastNum = lastParts[lastParts.length - 1];
+                  if (firstParts.slice(0, -1).join('-') === lastParts.slice(0, -1).join('-')) {
+                    propDisplay = `${escape(first)} to ${escape(lastLastNum)} <span style="font-size: 7pt; color: #64748b;">(${propNums.length} units)</span>`;
+                  } else {
+                    propDisplay = `${escape(first)} <span style="font-size: 7pt; color: #64748b;">(+${propNums.length - 1} units)</span>`;
+                  }
+                }
+
+                // Format PIS Tags
+                const pisCodes = group.items.map(i => i.pisCode).filter(Boolean) as string[];
+                let pisDisplay = '';
+                if (pisCodes.length === 1) {
+                  pisDisplay = `<div style="display: inline-block; font-family: monospace; font-weight: 800; font-size: 7pt; background: #fffbeb; color: #92400e; border: 1px solid #d97706; padding: 0 4px; border-radius: 2px; margin-top: 2px;">${escape(pisCodes[0])}</div>`;
+                } else if (pisCodes.length > 1) {
+                  const firstPis = pisCodes[0];
+                  const lastPis = pisCodes[pisCodes.length - 1];
+                  const lastPisSuffix = lastPis.split('-').pop();
+                  pisDisplay = `<div style="display: inline-block; font-family: monospace; font-weight: 800; font-size: 7pt; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; padding: 0 4px; border-radius: 2px; margin-top: 2px;">${pisCodes.length} PIS Tags (${escape(firstPis)} … ${escape(lastPisSuffix)})</div>`;
+                }
+
+                // Condition summary
+                const condCounts: Record<string, number> = {};
+                group.items.forEach(it => {
+                  const c = it.condition || 'Serviceable';
+                  condCounts[c] = (condCounts[c] || 0) + (Number(it.quantity) || 1);
+                });
+                const condStr = Object.entries(condCounts)
+                  .map(([c, count]) => count === group.totalQty ? c : `${count} ${c}`)
+                  .join(', ');
+
+                return `
+                  <tr>
+                    <td style="text-align: center; color: #475569; font-weight: bold;">${groupIdx + 1}</td>
+                    <td>
+                      <div style="font-family: monospace; font-weight: bold; color: #1e3a8a; font-size: 8pt;">${propDisplay}</div>
+                      ${pisDisplay}
+                    </td>
+                    <td>
+                      <div class="item-name" style="font-size: 9pt;">${escape(group.name)}</div>
+                      ${primary.description ? `<div class="item-desc">${escape(primary.description)}</div>` : ''}
+                      ${primary.serialNumber && group.items.length === 1 ? `<div style="font-family: monospace; font-size: 7pt; color: #64748b; margin-top: 1px;">SN: ${escape(primary.serialNumber)}</div>` : ''}
+                    </td>
+                    <td class="item-cat">${escape(primary.category || 'General Property')}</td>
+                    <td style="text-align: center;" class="item-qty">
+                      <div style="font-size: 10pt; font-weight: 900; color: #0f172a;">${qty}</div>
+                      <div style="font-size: 7pt; font-weight: bold; color: #64748b; text-transform: uppercase;">${escape(unit)}</div>
+                    </td>
+                    <td style="text-align: center;" class="item-cond">${escape(condStr || 'Serviceable')}</td>
+                  </tr>
+                `;
+              }).join('')}
             </tbody>
             <tfoot>
               <tr class="cabinet-total-row">
@@ -902,26 +1462,11 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                   ${cabinetQty}
                 </td>
                 <td style="text-align: center; font-size: 8pt; color: #475569;">
-                  ${locItems.length} articles
+                  ${groupedCabinetItems.length} article${groupedCabinetItems.length === 1 ? '' : 's'}
                 </td>
               </tr>
             </tfoot>
           </table>
-
-          <div class="signoff-grid">
-            <div class="signoff-cell">
-              <div class="signoff-role">Physical Count & Inventory Conducted by:</div>
-              <div class="signoff-line">_____________________________________________</div>
-              <div class="signoff-label">Science Teacher / Property Custodian</div>
-              <div class="signoff-date">Date Signed: _________________________________</div>
-            </div>
-            <div class="signoff-cell">
-              <div class="signoff-role">Verified & Inspected by:</div>
-              <div class="signoff-line">_____________________________________________</div>
-              <div class="signoff-label">Science Department Coordinator / School Head</div>
-              <div class="signoff-date">Date Signed: _________________________________</div>
-            </div>
-          </div>
         </div>
       `;
 
@@ -932,6 +1477,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
       <!DOCTYPE html>
       <html>
       <head>
+        <base href="${window.location.origin}/">
         <title>${escape(docTitle)}</title>
         <style>
           @page {
@@ -974,17 +1520,54 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
             line-height: 1.3;
           }
           .deped-header {
-            text-align: center;
             border-bottom: 2px solid #1e3a8a;
             padding-bottom: 6px;
             margin-bottom: 8px;
+            text-align: center;
           }
-          .deped-sub { font-size: 8pt; color: #4b5563; }
-          .deped-dept { font-size: 9.5pt; font-weight: bold; color: #1e3a8a; margin: 1px 0; }
-          .deped-div { font-size: 7.5pt; color: #4b5563; }
-          .school-name { font-size: 12pt; font-weight: 900; color: #991b1b; margin: 2px 0; letter-spacing: 0.5px; }
-          .lab-sub { font-size: 8pt; font-weight: 700; color: #1e3a8a; letter-spacing: 0.3px; }
-          .doc-title { font-size: 10.5pt; font-weight: 800; text-transform: uppercase; color: #111827; margin: 4px 0 2px 0; }
+          .header-main-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 4px;
+          }
+          .header-side-logo {
+            display: flex;
+            align-items: center;
+            flex-shrink: 0;
+          }
+          .left-logo-box {
+            justify-content: flex-start;
+            width: 140px;
+          }
+          .right-logo-box {
+            justify-content: flex-end;
+            width: 150px;
+          }
+          .header-logo-img {
+            max-width: 100%;
+            height: auto;
+            object-fit: contain;
+            display: block;
+          }
+          .lab-logo-img {
+            max-height: 52px;
+          }
+          .tri-logo-img {
+            max-height: 48px;
+          }
+          .header-center-text {
+            flex: 1;
+            text-align: center;
+            min-width: 0;
+          }
+          .deped-sub { font-size: 7.5pt; color: #4b5563; line-height: 1.2; }
+          .deped-dept { font-size: 9pt; font-weight: bold; color: #1e3a8a; margin: 1px 0; line-height: 1.2; }
+          .deped-div { font-size: 7pt; color: #4b5563; line-height: 1.2; }
+          .school-name { font-size: 11.5pt; font-weight: 900; color: #991b1b; margin: 1.5px 0; letter-spacing: 0.5px; }
+          .lab-sub { font-size: 7.5pt; font-weight: 700; color: #1e3a8a; letter-spacing: 0.3px; }
+          .doc-title { font-size: 10pt; font-weight: 800; text-transform: uppercase; color: #111827; margin: 4px 0 2px 0; }
           .cabinet-scope-pill {
             display: inline-block;
             background: #eff6ff;
@@ -1010,8 +1593,6 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
           }
           .cabinet-block {
             margin-bottom: 18px;
-            page-break-inside: avoid;
-            break-inside: avoid;
           }
           .page-break-after {
             page-break-after: always;
@@ -1027,6 +1608,8 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
             border-radius: 4px 4px 0 0;
             font-size: 9pt;
             font-weight: bold;
+            page-break-after: avoid;
+            break-after: avoid;
           }
           .cabinet-title {
             letter-spacing: 0.5px;
@@ -1041,6 +1624,18 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
             border-collapse: collapse;
             font-size: 8.5pt;
             margin-bottom: 10px;
+          }
+          .inventory-table thead {
+            display: table-header-group;
+          }
+          .inventory-table tr {
+            page-break-inside: avoid;
+            break-inside: avoid;
+          }
+          .inventory-table tfoot {
+            display: table-footer-group;
+            page-break-inside: avoid;
+            break-inside: avoid;
           }
           .inventory-table th, .inventory-table td {
             border: 1px solid #94a3b8;
@@ -1126,9 +1721,33 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
         ${contentHtml}
         <script>
           window.onload = function() {
-            setTimeout(function() {
-              window.print();
-            }, 300);
+            var images = document.images;
+            var total = images.length;
+            var loaded = 0;
+            function triggerPrint() {
+              setTimeout(function() {
+                window.print();
+              }, 300);
+            }
+            if (!total) {
+              triggerPrint();
+            } else {
+              for (var i = 0; i < total; i++) {
+                if (images[i].complete) {
+                  loaded++;
+                  if (loaded === total) triggerPrint();
+                } else {
+                  images[i].addEventListener('load', function() {
+                    loaded++;
+                    if (loaded === total) triggerPrint();
+                  });
+                  images[i].addEventListener('error', function() {
+                    loaded++;
+                    if (loaded === total) triggerPrint();
+                  });
+                }
+              }
+            }
           };
         </script>
       </body>
@@ -1137,91 +1756,39 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
     printWindow.document.close();
   };
 
-  // Group filtered items by category for collapsible view
-  const categoriesGrouped = useMemo(() => {
-    const map = new Map<string, PropertyItem[]>();
-
-    // Standard category order
-    propertyStorage.PROPERTY_CATEGORIES.forEach(cat => {
-      map.set(cat, []);
-    });
-
-    filteredItems.forEach(item => {
-      const cat = item.category || 'General Property';
-      if (!map.has(cat)) {
-        map.set(cat, []);
-      }
-      map.get(cat)!.push(item);
-    });
-
-    const result: {
-      category: string;
-      items: PropertyItem[];
-      totalValue: number;
-      totalQty: number;
-      serviceableCount: number;
-      repairCount: number;
-      unserviceableCount: number;
-    }[] = [];
-
-    map.forEach((catItems, category) => {
-      if (catItems.length > 0) {
-        const totalValue = catItems.reduce((acc, it) => acc + (it.totalValue || it.quantity * it.unitValue), 0);
-        const totalQty = catItems.reduce((acc, it) => acc + it.quantity, 0);
-        const serviceableCount = catItems.filter(it => it.condition === 'Serviceable').length;
-        const repairCount = catItems.filter(it => it.condition === 'Needs Repair').length;
-        const unserviceableCount = catItems.filter(
-          it => it.condition === 'Unserviceable' || it.condition === 'For Condemnation' || it.condition === 'Disposed'
-        ).length;
-
-        result.push({
-          category,
-          items: catItems,
-          totalValue,
-          totalQty,
-          serviceableCount,
-          repairCount,
-          unserviceableCount
-        });
-      }
-    });
-
-    return result;
-  }, [filteredItems]);
-
-  const toggleCategoryCollapse = (cat: string) => {
-    setCollapsedCategories(prev => {
-      const next = new Set(prev);
-      if (next.has(cat)) {
-        next.delete(cat);
-      } else {
-        next.add(cat);
-      }
-      return next;
-    });
-  };
-
-  const handleExpandAll = () => {
-    setCollapsedCategories(new Set());
-    setCollapsedNameGroups(new Set());
-  };
-
-  const handleCollapseAll = () => {
-    setCollapsedCategories(new Set(categoriesGrouped.map(c => c.category)));
-  };
-
-  const toggleSelectCategory = (categoryItems: PropertyItem[]) => {
+  // Stable Callbacks for Memoized Rows and Cards
+  const handleToggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
-      const allSelected = categoryItems.length > 0 && categoryItems.every(it => next.has(it.id));
-      if (allSelected) {
-        categoryItems.forEach(it => next.delete(it.id));
-      } else {
-        categoryItems.forEach(it => next.add(it.id));
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
-  };
+  }, []);
+
+  const handleLinkPIS = useCallback((item: PropertyItem) => {
+    setInitialEncoderPisCode(propertyStorage.generateNextPISCode(items));
+    setEditingItem(item);
+    setIsFormOpen(true);
+  }, [items]);
+
+  const handlePrintSticker = useCallback((item: PropertyItem) => {
+    setStickerItem(item);
+  }, []);
+
+  const handlePrintCable = useCallback((code: string) => {
+    setTargetCablePropertyCode(code);
+    setIsCableStickerOpen(true);
+  }, []);
+
+  const handleEdit = useCallback((item: PropertyItem) => {
+    setEditingItem(item);
+    setIsFormOpen(true);
+  }, []);
+
+  const handleDelete = useCallback((id: string, name: string) => {
+    handleDeleteItem(id, name);
+  }, []);
 
   // Helper to group properties of the same name together for category sub-sections
   const groupItemsByName = (list: PropertyItem[]) => {
@@ -1288,170 +1855,116 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
     return result;
   };
 
-  const renderItemRow = (
-    item: PropertyItem,
-    showCategoryCol = true,
-    isGroupChild = false,
-    unitIndex?: number,
-    totalGroupUnits?: number
-  ) => {
-    const isSelected = selectedIds.has(item.id);
-    const badge = CONDITION_BADGES[item.condition] || CONDITION_BADGES['Serviceable'];
-    const BadgeIcon = badge.icon;
+  // Group filtered items by category for collapsible view with pre-computed metrics and nameGroups
+  const categoriesGrouped = useMemo(() => {
+    const map = new Map<string, PropertyItem[]>();
 
-    return (
-      <tr
-        key={item.id}
-        className={`hover:bg-blue-50/40 transition-colors ${
-          isGroupChild ? 'bg-blue-50/15 border-l-4 border-l-blue-400' : ''
-        } ${isSelected ? 'bg-blue-50/70' : ''}`}
-      >
-        <td className="px-2 py-2 text-center">
-          <input
-            type="checkbox"
-            checked={isSelected}
-            onChange={() => toggleSelectItem(item.id)}
-            className="rounded-sm text-blue-600 focus:ring-blue-500"
-          />
-        </td>
-        <td className={`px-2.5 py-2 whitespace-nowrap ${isGroupChild ? 'pl-3' : ''}`}>
-          {item.pisCode ? (
-            <div className="inline-flex items-center gap-1.5 flex-wrap">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm font-mono font-black text-[10.5px] bg-[#FFF000] text-black border border-black shadow-2xs">
-                <span className="w-1.5 h-1.5 rounded-full bg-red-600 inline-block"></span>
-                {item.pisCode}
-              </span>
-              {item.pisCodes && item.pisCodes.length > 1 && (
-                <span 
-                  title={`Assigned multi-unit PIS stickers (${item.pisCodes.length} units):\n${item.pisCodes.join(', ')}`}
-                  className="px-1.5 py-0.5 text-[9.5px] font-black bg-blue-100 text-blue-900 border border-blue-300 rounded-sm cursor-help whitespace-nowrap"
-                >
-                  +{item.pisCodes.length - 1} PIS
-                </span>
-              )}
-            </div>
-          ) : (
-            <button
-              onClick={() => {
-                setInitialEncoderPisCode(propertyStorage.generateNextPISCode(items));
-                setEditingItem(item);
-                setIsFormOpen(true);
-              }}
-              className="text-[10px] font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-dashed border-amber-300 px-2 py-0.5 rounded-sm transition-colors"
-            >
-              + Link PIS
-            </button>
-          )}
-        </td>
-        <td className="px-2.5 py-2 font-mono font-bold text-blue-900 whitespace-nowrap">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span>{item.propertyNumber}</span>
-            {item.propertyNumbers && item.propertyNumbers.length > 1 && (
-              <span 
-                title={`Sequential Property Codes (${item.propertyNumbers.length} units):\n${item.propertyNumbers.join(', ')}`}
-                className="px-1.5 py-0.5 text-[9.5px] font-bold bg-blue-100 text-blue-900 border border-blue-300 rounded-sm cursor-help whitespace-nowrap"
-              >
-                +{item.propertyNumbers.length - 1} Codes
-              </span>
-            )}
-          </div>
-          {item.parNumber && (
-            <span className="block text-[10px] font-normal text-gray-400">
-              {item.parNumber}
-            </span>
-          )}
-        </td>
-        <td className="px-2.5 py-2 min-w-[140px] max-w-[220px]">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="font-bold text-gray-900 text-xs truncate" title={item.name}>{item.name}</span>
-            {isGroupChild && unitIndex !== undefined && totalGroupUnits !== undefined && (
-              <span className="px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-blue-100 text-blue-800 border border-blue-200 whitespace-nowrap">
-                Unit {unitIndex} of {totalGroupUnits}
-              </span>
-            )}
-          </div>
-          {item.description && (
-            <p className="text-[11px] text-gray-500 truncate" title={item.description}>
-              {item.description}
-            </p>
-          )}
-          {item.serialNumber && (
-            <span className="text-[10px] font-mono text-gray-400 block truncate" title={`SN: ${item.serialNumber}`}>
-              SN: {item.serialNumber}
-            </span>
-          )}
-        </td>
-        {showCategoryCol && (
-          <td className="px-2.5 py-2 whitespace-nowrap max-w-[140px]">
-            <span className="text-gray-700 font-medium truncate block" title={item.category}>{item.category}</span>
-            <span className="block text-[10px] text-gray-400 truncate">{item.inventoryType}</span>
-          </td>
-        )}
-        <td className="px-2 py-2 text-center whitespace-nowrap font-bold text-gray-800">
-          {item.quantity} {item.unit}
-        </td>
-        <td className="px-2.5 py-2 text-right whitespace-nowrap font-bold text-emerald-800">
-          ₱ {(item.totalValue || item.quantity * item.unitValue).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-          <span className="block text-[10px] font-normal text-gray-400">
-            @ ₱ {item.unitValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-          </span>
-        </td>
-        <td className="px-2.5 py-2 whitespace-nowrap text-gray-700 max-w-[120px] truncate" title={item.location}>
-          {item.location}
-        </td>
-        <td className="px-2.5 py-2 whitespace-nowrap font-medium text-gray-900 max-w-[130px] truncate" title={item.custodian}>
-          {item.custodian}
-        </td>
-        <td className="px-2.5 py-2 text-center whitespace-nowrap">
-          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-[10px] font-bold border ${badge.bg} ${badge.text} ${badge.border}`}>
-            <BadgeIcon className="w-3 h-3" />
-            {item.condition}
-          </span>
-        </td>
-        <td className="px-2.5 py-2 text-right whitespace-nowrap">
-          <div className="flex items-center justify-end space-x-1">
-            <button
-              onClick={() => setStickerItem(item)}
-              title="Print DepEd Property Sticker / Barcode"
-              className="p-1 text-blue-600 hover:bg-blue-50 rounded-sm transition-colors"
-            >
-              <Tag className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => {
-                setTargetCablePropertyCode(item.propertyNumber);
-                setIsCableStickerOpen(true);
-              }}
-              title="Print Cable Peripheral Sticker (PIS Tag)"
-              className="p-1 text-amber-600 hover:bg-amber-50 rounded-sm transition-colors"
-            >
-              <Cable className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => {
-                setEditingItem(item);
-                setIsFormOpen(true);
-              }}
-              title="Edit Property Details"
-              className="p-1 text-gray-600 hover:bg-gray-100 rounded-sm transition-colors"
-            >
-              <Edit2 className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => handleDeleteItem(item.id, item.name)}
-              title="Delete Property Record"
-              className="p-1 text-red-600 hover:bg-red-50 rounded-sm transition-colors"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </div>
-        </td>
-      </tr>
-    );
+    // Standard category order
+    propertyStorage.PROPERTY_CATEGORIES.forEach(cat => {
+      map.set(cat, []);
+    });
+
+    for (const item of filteredItems) {
+      const cat = item.category || 'General Property';
+      if (!map.has(cat)) {
+        map.set(cat, []);
+      }
+      map.get(cat)!.push(item);
+    }
+
+    const result: {
+      category: string;
+      items: PropertyItem[];
+      nameGroups: ReturnType<typeof groupItemsByName>;
+      totalValue: number;
+      totalQty: number;
+      serviceableCount: number;
+      repairCount: number;
+      unserviceableCount: number;
+    }[] = [];
+
+    map.forEach((catItems, category) => {
+      if (catItems.length > 0) {
+        let totalValue = 0;
+        let totalQty = 0;
+        let serviceableCount = 0;
+        let repairCount = 0;
+        let unserviceableCount = 0;
+
+        for (const it of catItems) {
+          totalValue += (it.totalValue || it.quantity * it.unitValue);
+          totalQty += it.quantity;
+          if (it.condition === 'Serviceable') serviceableCount++;
+          else if (it.condition === 'Needs Repair') repairCount++;
+          else unserviceableCount++;
+        }
+
+        const nameGroups = groupItemsByName(catItems);
+
+        result.push({
+          category,
+          items: catItems,
+          nameGroups,
+          totalValue,
+          totalQty,
+          serviceableCount,
+          repairCount,
+          unserviceableCount
+        });
+      }
+    });
+
+    return result;
+  }, [filteredItems]);
+
+  const totalFlatPages = Math.ceil(filteredItems.length / itemsPerPage) || 1;
+  const paginatedFlatItems = useMemo(() => {
+    const start = (flatPage - 1) * itemsPerPage;
+    return filteredItems.slice(start, start + itemsPerPage);
+  }, [filteredItems, flatPage, itemsPerPage]);
+
+  const toggleCategoryCollapse = (cat: string) => {
+    setCollapsedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) {
+        next.delete(cat);
+      } else {
+        next.add(cat);
+      }
+      return next;
+    });
+  };
+
+  const handleExpandAll = () => {
+    setCollapsedCategories(new Set());
+    const allGroupKeys = new Set<string>();
+    items.forEach(it => {
+      const key = (it.name || '').trim().toLowerCase();
+      if (key) allGroupKeys.add(key);
+    });
+    setExpandedNameGroups(allGroupKeys);
+  };
+
+  const handleCollapseAll = () => {
+    setCollapsedCategories(new Set(categoriesGrouped.map(c => c.category)));
+    setExpandedNameGroups(new Set());
+  };
+
+  const toggleSelectCategory = (categoryItems: PropertyItem[]) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      const allSelected = categoryItems.length > 0 && categoryItems.every(it => next.has(it.id));
+      if (allSelected) {
+        categoryItems.forEach(it => next.delete(it.id));
+      } else {
+        categoryItems.forEach(it => next.add(it.id));
+      }
+      return next;
+    });
   };
 
   // Reusable Table View for category groups or flat list
-  const renderTable = (itemsList: PropertyItem[], showCategoryCol = true) => (
+  const renderTable = (itemsList: PropertyItem[], showCategoryCol = true, precomputedGroups?: ReturnType<typeof groupItemsByName>) => (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-xs">
         <thead className="bg-gray-50 text-gray-600 border-b border-gray-200 uppercase font-bold text-[10px] tracking-wider">
@@ -1461,7 +1974,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                 type="checkbox"
                 checked={itemsList.length > 0 && itemsList.every(i => selectedIds.has(i.id))}
                 onChange={() => toggleSelectCategory(itemsList)}
-                className="rounded-sm text-blue-600 focus:ring-blue-500"
+                className="rounded-sm text-blue-600 focus:ring-blue-500 cursor-pointer"
               />
             </th>
             <th className="px-2.5 py-2 whitespace-nowrap">PIS Sticker Tag</th>
@@ -1473,9 +1986,6 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
             </th>
             {showCategoryCol && <th className="px-2.5 py-2 whitespace-nowrap">Category</th>}
             <th className="px-2 py-2 text-center whitespace-nowrap">Qty</th>
-            <th className="px-2.5 py-2 text-right cursor-pointer whitespace-nowrap" onClick={() => { setSortField('totalValue'); setSortAsc(!sortAsc); }}>
-              Total Value (₱)
-            </th>
             <th className="px-2.5 py-2 whitespace-nowrap">Location</th>
             <th className="px-2.5 py-2 whitespace-nowrap">Custodian</th>
             <th className="px-2.5 py-2 text-center whitespace-nowrap">Condition</th>
@@ -1485,16 +1995,28 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
         <tbody className="divide-y divide-gray-100 bg-white">
           {(() => {
             if (!groupSameNames) {
-              return itemsList.map(item => renderItemRow(item, showCategoryCol, false));
+              return itemsList.map(item => (
+                <PropertyTableRow
+                  key={item.id}
+                  item={item}
+                  showCategoryCol={showCategoryCol}
+                  isGroupChild={false}
+                  isSelected={selectedIds.has(item.id)}
+                  onToggleSelect={handleToggleSelect}
+                  onLinkPIS={handleLinkPIS}
+                  onPrintSticker={handlePrintSticker}
+                  onPrintCable={handlePrintCable}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                  onExportExcel={handleExportByName}
+                  onBorrow={onBorrow}
+                />
+              ));
             }
 
-            const groups = groupItemsByName(itemsList);
+            const groups = precomputedGroups || groupItemsByName(itemsList);
             return groups.map(group => {
-              if (!group.hasMultiple) {
-                return renderItemRow(group.items[0], showCategoryCol, false);
-              }
-
-              const isGroupCollapsed = collapsedNameGroups.has(group.key);
+              const isGroupExpanded = expandedNameGroups.has(group.key);
               const allGroupSelected = group.items.every(i => selectedIds.has(i.id));
               const someGroupSelected = group.items.some(i => selectedIds.has(i.id));
 
@@ -1519,14 +2041,14 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                           });
                         }}
                         className="rounded-sm text-blue-600 focus:ring-blue-500 cursor-pointer"
-                        title={`Select all ${group.items.length} units of ${group.name}`}
+                        title={`Select all ${group.items.length} ${group.items.length === 1 ? 'unit' : 'units'} of ${group.name}`}
                       />
                     </td>
-                    <td colSpan={showCategoryCol ? 10 : 9} className="px-2.5 py-1.5">
+                    <td colSpan={showCategoryCol ? 9 : 8} className="px-2.5 py-1.5">
                       <div
                         className="flex items-center justify-between gap-3 cursor-pointer"
                         onClick={() => {
-                          setCollapsedNameGroups(prev => {
+                          setExpandedNameGroups(prev => {
                             const next = new Set(prev);
                             if (next.has(group.key)) next.delete(group.key);
                             else next.add(group.key);
@@ -1539,17 +2061,17 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setCollapsedNameGroups(prev => {
+                              setExpandedNameGroups(prev => {
                                 const next = new Set(prev);
                                 if (next.has(group.key)) next.delete(group.key);
                                 else next.add(group.key);
                                 return next;
                               });
                             }}
-                            className="p-0.5 -ml-1 text-gray-500 hover:text-blue-700 transition-transform duration-150"
-                            title={isGroupCollapsed ? 'Expand units' : 'Collapse units'}
+                            className="p-0.5 -ml-1 text-gray-500 hover:text-blue-700 transition-transform duration-150 cursor-pointer"
+                            title={isGroupExpanded ? 'Collapse units' : 'Expand units'}
                           >
-                            <ChevronRight className={`w-3.5 h-3.5 transition-transform duration-150 ${!isGroupCollapsed ? 'rotate-90 text-blue-600' : ''}`} />
+                            <ChevronRight className={`w-3.5 h-3.5 transition-transform duration-150 ${isGroupExpanded ? 'rotate-90 text-blue-600' : ''}`} />
                           </button>
 
                           <span className="font-extrabold text-blue-950 text-xs uppercase tracking-tight flex items-center gap-1.5">
@@ -1558,7 +2080,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                           </span>
 
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-900 border border-blue-300">
-                            {group.items.length} items ({group.totalQty} {group.totalQty === 1 ? 'unit' : 'units'})
+                            {group.items.length} {group.items.length === 1 ? 'item' : 'items'} ({group.totalQty} {group.totalQty === 1 ? 'unit' : 'units'})
                           </span>
 
                           {/* PIS Tags preview */}
@@ -1571,17 +2093,26 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                           </span>
                         </div>
 
-                        <div className="flex items-center gap-3 text-xs flex-shrink-0">
+                        <div className="flex items-center gap-2.5 text-xs flex-shrink-0">
                           {group.locations.length > 0 && (
                             <span className="text-gray-500 hidden lg:inline text-[11px]">
                               Loc: <strong className="text-gray-700">{group.locations.join(', ')}</strong>
                             </span>
                           )}
-                          <span className="text-emerald-700 font-bold text-xs">
-                            Total: ₱ {group.totalValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleExportByName(group.name);
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded shadow-2xs transition-colors cursor-pointer"
+                            title={`Export all ${group.items.length} ${group.items.length === 1 ? 'unit' : 'units'} of "${group.name}" to Excel (.xlsx)`}
+                          >
+                            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Export Excel</span>
+                          </button>
                           <span className="text-[10.5px] text-blue-600 font-bold hover:underline">
-                            {isGroupCollapsed ? 'Expand Units' : 'Collapse'}
+                            {isGroupExpanded ? 'Collapse' : 'Expand Units'}
                           </span>
                         </div>
                       </div>
@@ -1589,9 +2120,25 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                   </tr>
 
                   {/* Individual unit rows */}
-                  {!isGroupCollapsed && group.items.map((item, idx) =>
-                    renderItemRow(item, showCategoryCol, true, idx + 1, group.items.length)
-                  )}
+                  {isGroupExpanded && group.items.map((item, idx) => (
+                    <PropertyTableRow
+                      key={item.id}
+                      item={item}
+                      showCategoryCol={showCategoryCol}
+                      isGroupChild={true}
+                      unitIndex={idx + 1}
+                      totalGroupUnits={group.items.length}
+                      isSelected={selectedIds.has(item.id)}
+                      onToggleSelect={handleToggleSelect}
+                      onLinkPIS={handleLinkPIS}
+                      onPrintSticker={handlePrintSticker}
+                      onPrintCable={handlePrintCable}
+                      onEdit={handleEdit}
+                      onDelete={handleDelete}
+                      onExportExcel={handleExportByName}
+                      onBorrow={onBorrow}
+                    />
+                  ))}
                 </React.Fragment>
               );
             });
@@ -1604,140 +2151,18 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
   // Reusable Cards View for category groups or flat list
   const renderCards = (itemsList: PropertyItem[]) => (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {itemsList.map(item => {
-        const badge = CONDITION_BADGES[item.condition] || CONDITION_BADGES['Serviceable'];
-        const BadgeIcon = badge.icon;
-
-        return (
-          <Card
-            key={item.id}
-            className="p-5 border-gray-200 hover:shadow-lg transition-all duration-200 flex flex-col justify-between rounded-md bg-white"
-          >
-            <div>
-              {/* Top tag & condition */}
-              <div className="flex items-center justify-between mb-2 gap-2">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {item.pisCode && (
-                    <span className="font-mono text-[10.5px] font-black bg-[#FFF000] text-black border border-black px-2 py-0.5 rounded-sm shadow-xs flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-600 inline-block"></span>
-                      {item.pisCode}
-                    </span>
-                  )}
-                  {item.pisCodes && item.pisCodes.length > 1 && (
-                    <span 
-                      title={`Assigned multi-unit PIS stickers (${item.pisCodes.length} units):\n${item.pisCodes.join(', ')}`}
-                      className="px-1.5 py-0.5 text-[10px] font-black bg-blue-100 text-blue-900 border border-blue-300 rounded-sm cursor-help whitespace-nowrap"
-                    >
-                      +{item.pisCodes.length - 1} PIS
-                    </span>
-                  )}
-                  <span className="font-mono text-xs font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded-sm border border-blue-200 inline-flex items-center gap-1">
-                    <span>{item.propertyNumber}</span>
-                    {item.propertyNumbers && item.propertyNumbers.length > 1 && (
-                      <span 
-                        title={`Sequential Property Codes (${item.propertyNumbers.length} units):\n${item.propertyNumbers.join(', ')}`}
-                        className="text-[10px] font-bold text-blue-700 bg-blue-100 px-1 rounded cursor-help"
-                      >
-                        +{item.propertyNumbers.length - 1}
-                      </span>
-                    )}
-                  </span>
-                </div>
-                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-[10px] font-bold border ${badge.bg} ${badge.text} ${badge.border} flex-shrink-0`}>
-                  <BadgeIcon className="w-3 h-3" />
-                  {item.condition}
-                </span>
-              </div>
-
-              {/* Title and specs with Avatar thumbnail */}
-              <div className="flex items-start gap-3 my-2">
-                {item.imageUrl ? (
-                  <div className="w-12 h-12 rounded-md border border-gray-200 bg-white overflow-hidden flex-shrink-0 shadow-2xs">
-                    <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
-                  </div>
-                ) : (
-                  <div className="w-12 h-12 rounded-md border border-gray-200 bg-gray-50 flex items-center justify-center flex-shrink-0 text-gray-400">
-                    <Building2 className="w-5 h-5 text-gray-400" />
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <h4 className="font-bold text-gray-900 text-sm leading-snug line-clamp-1">{item.name}</h4>
-                  <p className="text-xs text-gray-500 line-clamp-2 mt-0.5">{item.description || 'No detailed specifications recorded.'}</p>
-                </div>
-              </div>
-
-              {/* Metadata grid */}
-              <div className="grid grid-cols-2 gap-2 text-[11px] bg-gray-50 p-2.5 rounded-md border border-gray-100 mb-3">
-                <div>
-                  <span className="text-gray-400 block text-[9px] font-bold uppercase">Category</span>
-                  <span className="font-medium text-gray-800 truncate block">{item.category}</span>
-                </div>
-                <div>
-                  <span className="text-gray-400 block text-[9px] font-bold uppercase">Quantity</span>
-                  <span className="font-bold text-gray-800">{item.quantity} {item.unit}</span>
-                </div>
-                <div>
-                  <span className="text-gray-400 block text-[9px] font-bold uppercase">Location</span>
-                  <span className="font-medium text-gray-800 truncate block">{item.location}</span>
-                </div>
-                <div>
-                  <span className="text-gray-400 block text-[9px] font-bold uppercase">Total Cost</span>
-                  <span className="font-extrabold text-emerald-700">₱ {(item.totalValue || item.quantity * item.unitValue).toLocaleString('en-PH', { maximumFractionDigits: 0 })}</span>
-                </div>
-              </div>
-
-              {/* Custodian tag */}
-              <div className="flex items-center space-x-1.5 text-xs text-gray-600 mb-2">
-                <UserCheck className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                <span className="truncate"><strong>Custodian:</strong> {item.custodian}</span>
-              </div>
-            </div>
-
-            {/* Card Footer Actions */}
-            <div className="pt-3 border-t border-gray-100 flex items-center justify-between mt-2">
-              <span className="text-[10px] font-medium text-gray-400">
-                Fund: {item.sourceOfFund.split('(')[0]}
-              </span>
-              <div className="flex items-center space-x-1">
-                <button
-                  onClick={() => setStickerItem(item)}
-                  title="Print Property Sticker Tag"
-                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-sm transition-colors"
-                >
-                  <Tag className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => {
-                    setTargetCablePropertyCode(item.propertyNumber);
-                    setIsCableStickerOpen(true);
-                  }}
-                  title="Print Cable Peripheral Sticker (PIS Tag)"
-                  className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-sm transition-colors"
-                >
-                  <Cable className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => {
-                    setEditingItem(item);
-                    setIsFormOpen(true);
-                  }}
-                  title="Edit Record"
-                  className="p-1.5 text-gray-600 hover:bg-gray-100 rounded-sm transition-colors"
-                >
-                  <Edit2 className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => handleDeleteItem(item.id, item.name)}
-                  title="Delete"
-                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-sm transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </Card>
-        );
-      })}
+      {itemsList.map(item => (
+        <PropertyCard
+          key={item.id}
+          item={item}
+          onPrintSticker={handlePrintSticker}
+          onPrintCable={handlePrintCable}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
+          onExportExcel={handleExportByName}
+          onBorrow={onBorrow}
+        />
+      ))}
     </div>
   );
 
@@ -1761,18 +2186,18 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
 
         <Card className="p-5 border-gray-100 hover:shadow-md transition-shadow group rounded-md">
           <div className="flex items-center justify-between mb-3">
-            <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-md group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-              <Coins className="w-5 h-5" />
+            <div className="p-2.5 bg-amber-50 text-amber-700 rounded-md group-hover:bg-amber-600 group-hover:text-white transition-colors">
+              <Tag className="w-5 h-5" />
             </div>
-            <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-sm">
-              Book Value
+            <span className="text-[10px] font-bold px-2 py-0.5 bg-amber-50 text-amber-800 rounded-sm">
+              {stats.totalAssets > 0 ? Math.round((items.filter(i => i.pisCode).length / stats.totalAssets) * 100) : 0}% Tagged
             </span>
           </div>
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Total Asset Valuation</p>
-          <h3 className="text-2xl md:text-3xl font-black text-emerald-700 mt-1">
-            ₱ {stats.totalValuation.toLocaleString('en-PH', { maximumFractionDigits: 0 })}
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">PIS Tagged Assets</p>
+          <h3 className="text-2xl md:text-3xl font-extrabold text-gray-800 mt-1">
+            {items.filter(i => i.pisCode).length}
           </h3>
-          <p className="text-[11px] text-gray-500 mt-1">Combined acquisition cost</p>
+          <p className="text-[11px] text-gray-500 mt-1">Units carrying physical barcode tags</p>
         </Card>
 
         <Card className="p-5 border-gray-100 hover:shadow-md transition-shadow group rounded-md">
@@ -1858,7 +2283,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
               }`}
             >
               <PieChartIcon className="w-4 h-4" />
-              <span>Asset Valuation & Charts</span>
+              <span>Inventory Analytics</span>
             </button>
           </div>
 
@@ -1958,23 +2383,80 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
               <span>DepEd Report</span>
             </button>
 
+            {/* Export to Excel Dropdown */}
+            <div className="relative" ref={exportMenuRef}>
+              <button
+                type="button"
+                onClick={() => setIsExportMenuOpen(prev => !prev)}
+                title="Export properties to Excel (.xlsx)"
+                className="px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-md text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-2xs whitespace-nowrap cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Export Excel</span>
+                <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform ${isExportMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {isExportMenuOpen && (
+                <div className="absolute right-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
+                    Export Excel (.xlsx)
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setIsExportMenuOpen(false);
+                      await handleExportAll();
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center justify-between cursor-pointer"
+                  >
+                    <span className="font-medium">Export All Properties</span>
+                    <span className="text-[10px] text-gray-400 font-mono">({items.length} units)</span>
+                  </button>
+                  {deferredSearchTerm && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setIsExportMenuOpen(false);
+                        await handleExportFiltered();
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center justify-between cursor-pointer"
+                    >
+                      <span className="font-medium">Export Filtered Results</span>
+                      <span className="text-[10px] text-gray-400 font-mono">({filteredItems.length} units)</span>
+                    </button>
+                  )}
+                  <div className="border-t border-gray-100 my-1" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsExportMenuOpen(false);
+                      setIsExportByNameModalOpen(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs text-indigo-700 hover:bg-indigo-50 font-semibold flex items-center gap-2 cursor-pointer"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Export by Property Name...</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
             <button
-              onClick={() => propertyStorage.exportPropertyCSV(filteredItems)}
-              title="Export filtered records to Excel/CSV"
+              onClick={() => setIsBulkModalOpen(true)}
+              title="Bulk import property items or download spreadsheet templates"
               className="px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-md text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-2xs whitespace-nowrap cursor-pointer"
             >
-              <Download className="w-3.5 h-3.5 text-gray-500" />
-              <span>Export CSV</span>
+              <Upload className="w-3.5 h-3.5 text-gray-500" />
+              <span>Bulk Import / Download</span>
             </button>
           </div>
         </div>
 
         {/* Tab 1: Property Registry */}
-        {activeTab === 'registry' && (
-          <div className="p-4 md:p-6 space-y-3.5">
+        <div className={activeTab === 'registry' ? 'p-4 md:p-6 space-y-3.5' : 'hidden'}>
             {/* Search and Primary Filters Bar */}
             <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2.5">
-              {/* Search input */}
+              {/* Search input with deferred query for 60fps responsiveness */}
               <div className="relative flex-1 min-w-[220px]">
                 <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
@@ -1982,8 +2464,18 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                   placeholder="Search by property tag, name, serial no, location, custodian..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 text-xs md:text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                  className="w-full pl-10 pr-9 py-2 text-xs md:text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
                 />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
+                    title="Clear search"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
 
               {/* Category Filter */}
@@ -1995,7 +2487,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                 >
                   <option value="All">All Categories ({items.length})</option>
                   {propertyStorage.PROPERTY_CATEGORIES.map(cat => {
-                    const count = items.filter(i => i.category === cat).length;
+                    const count = categoryCounts.get(cat) || 0;
                     return <option key={cat} value={cat}>{cat} ({count})</option>;
                   })}
                 </select>
@@ -2011,7 +2503,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                 >
                   <option value="All">All Locations ({items.length})</option>
                   {distinctLocations.map(loc => {
-                    const count = items.filter(i => i.location === loc).length;
+                    const count = locationCounts.get(loc) || 0;
                     return <option key={loc} value={loc}>{loc} ({count})</option>;
                   })}
                 </select>
@@ -2116,19 +2608,19 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                   <span>Group Same Names</span>
                 </button>
 
-                {/* Expand / Collapse All (Only in Category Grouping) */}
-                {viewGrouping === 'category' && (
+                {/* Expand / Collapse All (In Category Grouping or Same-Name Grouping) */}
+                {(viewGrouping === 'category' || groupSameNames) && (
                   <div className="flex items-center space-x-1">
                     <button
                       onClick={handleExpandAll}
-                      title="Expand all category sections and property groups"
+                      title="Expand all sections and grouped properties"
                       className="px-2 py-1 border border-gray-300 rounded-sm bg-white hover:bg-gray-50 text-[11px] font-bold text-gray-700 transition-colors cursor-pointer"
                     >
                       Expand
                     </button>
                     <button
                       onClick={handleCollapseAll}
-                      title="Collapse all category sections"
+                      title="Collapse all sections and grouped properties"
                       className="px-2 py-1 border border-gray-300 rounded-sm bg-white hover:bg-gray-50 text-[11px] font-bold text-gray-700 transition-colors cursor-pointer"
                     >
                       Collapse
@@ -2262,10 +2754,6 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                               </span>
                             )}
                           </div>
-
-                          <span className="font-black text-xs md:text-sm text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-sm border border-emerald-200">
-                            ₱ {group.totalValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                          </span>
                         </div>
                       </div>
 
@@ -2273,7 +2761,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                       {!isCollapsed && (
                         <div>
                           {viewMode === 'table' ? (
-                            renderTable(group.items, false)
+                            renderTable(group.items, false, group.nameGroups)
                           ) : (
                             <div className="p-4 bg-gray-50/30">
                               {renderCards(group.items)}
@@ -2286,15 +2774,69 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                 })}
               </div>
             ) : (
-              /* Flat List View */
-              viewMode === 'table' ? renderTable(filteredItems, true) : renderCards(filteredItems)
+              /* Flat List View with Clean Pagination */
+              <div className="space-y-3">
+                <div className="border border-gray-200 rounded-md bg-white shadow-xs overflow-hidden">
+                  {viewMode === 'table' ? renderTable(paginatedFlatItems, true) : (
+                    <div className="p-4 bg-gray-50/30">
+                      {renderCards(paginatedFlatItems)}
+                    </div>
+                  )}
+
+                  {/* Pagination Controls Bar */}
+                  {filteredItems.length > itemsPerPage && (
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 bg-gray-50 border-t border-gray-200 text-xs text-gray-600">
+                      <div>
+                        Showing <strong className="text-gray-900 font-bold">{(flatPage - 1) * itemsPerPage + 1}</strong> to{' '}
+                        <strong className="text-gray-900 font-bold">{Math.min(flatPage * itemsPerPage, filteredItems.length)}</strong> of{' '}
+                        <strong className="text-gray-900 font-bold">{filteredItems.length}</strong> items
+                      </div>
+                      <div className="flex items-center space-x-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setFlatPage(1)}
+                          disabled={flatPage === 1}
+                          className="px-2.5 py-1 border border-gray-300 rounded bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-xs transition-colors cursor-pointer"
+                        >
+                          First
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFlatPage(p => Math.max(1, p - 1))}
+                          disabled={flatPage === 1}
+                          className="px-2.5 py-1 border border-gray-300 rounded bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-xs transition-colors cursor-pointer"
+                        >
+                          Prev
+                        </button>
+                        <span className="px-3 py-1 font-bold text-gray-700 bg-gray-200/70 rounded">
+                          {flatPage} / {totalFlatPages}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setFlatPage(p => Math.min(totalFlatPages, p + 1))}
+                          disabled={flatPage === totalFlatPages}
+                          className="px-2.5 py-1 border border-gray-300 rounded bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-xs transition-colors cursor-pointer"
+                        >
+                          Next
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFlatPage(totalFlatPages)}
+                          disabled={flatPage === totalFlatPages}
+                          className="px-2.5 py-1 border border-gray-300 rounded bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-xs transition-colors cursor-pointer"
+                        >
+                          Last
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
-          </div>
-        )}
+        </div>
 
         {/* Tab 2: DepEd Inventory Report Preview */}
-        {activeTab === 'reports' && (
-          <div className="p-4 md:p-8 space-y-6">
+        <div className={activeTab === 'reports' ? 'p-4 md:p-8 space-y-6' : 'hidden'}>
             {/* Top Controls Card (Clean, Institutional Layout with Highlighted Borders) */}
             <div className="bg-white border-2 border-slate-300 rounded-lg p-5 sm:p-6 shadow-sm space-y-4">
               <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -2312,6 +2854,20 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={async () => {
+                      const locName = reportLocation === 'All' ? 'All_Locations' : reportLocation.replace(/[^a-zA-Z0-9_\-\s]/g, '').trim().replace(/\s+/g, '_');
+                      const date = new Date().toISOString().split('T')[0];
+                      await exportPropertyFullExcel(reportFilteredItems, `LNHS_Property_Location_${locName}_${date}.xlsx`, reportLocation === 'All' ? 'All Locations' : reportLocation);
+                      toast.success(`Exported ${reportFilteredItems.length} items to Excel`);
+                    }}
+                    className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-sm text-xs font-bold transition-all flex items-center space-x-1.5 shadow-xs cursor-pointer"
+                    title="Export currently filtered location report to formatted Excel (.xlsx)"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>Export Location Excel</span>
+                  </button>
+
                   <button
                     onClick={() => propertyStorage.exportPropertyCSV(reportFilteredItems)}
                     className="px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-sm text-xs font-bold transition-all flex items-center space-x-1.5 shadow-xs"
@@ -2455,7 +3011,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                           {distinctLocations
                             .filter(loc => !reportLocSearchQuery || loc.toLowerCase().includes(reportLocSearchQuery.toLowerCase().trim()))
                             .map(loc => {
-                              const count = items.filter(i => (i.location || '').trim().toLowerCase() === loc.trim().toLowerCase()).length;
+                              const count = locationCounts.get(loc.trim().toLowerCase()) || 0;
                               const isSelected = reportLocation.trim().toLowerCase() === loc.trim().toLowerCase();
                               const isCabinet = /^cabinet\s*\d+/i.test(loc);
 
@@ -2557,8 +3113,18 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                       placeholder="Search in report..."
                       value={reportSearchTerm}
                       onChange={(e) => setReportSearchTerm(e.target.value)}
-                      className="w-full pl-8 pr-2 py-1.5 text-xs bg-white text-gray-900 rounded-sm border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-2xs font-medium"
+                      className="w-full pl-8 pr-7 py-1.5 text-xs bg-white text-gray-900 rounded-sm border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:outline-none shadow-2xs font-medium"
                     />
+                    {reportSearchTerm && (
+                      <button
+                        type="button"
+                        onClick={() => setReportSearchTerm('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
+                        title="Clear search"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2580,7 +3146,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                   <span className={reportLocation === 'All' ? 'text-blue-200 font-normal' : 'text-gray-500 font-normal'}>({items.length})</span>
                 </button>
                 {distinctLocations.slice(0, 6).map(loc => {
-                  const count = items.filter(i => (i.location || '').trim() === loc.trim()).length;
+                  const count = locationCounts.get(loc.trim().toLowerCase()) || 0;
                   const isSelected = reportLocation === loc;
                   return (
                     <button
@@ -2677,6 +3243,19 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                   </button>
                   <button
                     type="button"
+                    onClick={async () => {
+                      const locName = reportLocation === 'All' ? 'All_Locations' : reportLocation.replace(/[^a-zA-Z0-9_\-\s]/g, '').trim().replace(/\s+/g, '_');
+                      const date = new Date().toISOString().split('T')[0];
+                      await exportPropertyFullExcel(reportFilteredItems, `LNHS_Property_Location_${locName}_${date}.xlsx`, reportLocation === 'All' ? 'All Locations' : reportLocation);
+                      toast.success(`Exported ${reportFilteredItems.length} items to Excel`);
+                    }}
+                    className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-md text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 shadow-2xs cursor-pointer"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+                    <span>Export Location Excel</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => propertyStorage.exportPropertyCSV(reportFilteredItems)}
                     className="px-4 py-2.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-md text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 shadow-2xs"
                   >
@@ -2687,30 +3266,29 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
               </div>
             </div>
           </div>
-        )}
 
-        {/* Tab 3: Analytics & Valuation */}
+        {/* Tab 3: Analytics */}
         {activeTab === 'analytics' && (
           <div className="p-4 md:p-8 space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Category Valuation Bar Chart */}
+              {/* Category Distribution Bar Chart */}
               <Card className="p-5 border-gray-200">
                 <div className="flex items-center justify-between mb-4">
-                  <h4 className="font-bold text-gray-800 text-sm">Asset Valuation by Category (₱ PHP)</h4>
-                  <span className="text-xs text-gray-400">Total: ₱ {stats.totalValuation.toLocaleString('en-PH')}</span>
+                  <h4 className="font-bold text-gray-800 text-sm">Equipment Distribution by Category (Units)</h4>
+                  <span className="text-xs text-gray-400">Total: {stats.totalQuantity} Units</span>
                 </div>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
-                      data={stats.valueByCategory}
+                      data={stats.countByCategory || []}
                       layout="vertical"
                       margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
                     >
-                      <XAxis type="number" tickFormatter={(val) => `₱${(val / 1000).toFixed(0)}k`} />
+                      <XAxis type="number" />
                       <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 10 }} />
-                      <RechartsTooltip formatter={(val: any) => [`₱ ${Number(val).toLocaleString('en-PH')}`, 'Valuation']} />
+                      <RechartsTooltip formatter={(val: any) => [`${Number(val)} units`, 'Quantity']} />
                       <Bar dataKey="value" fill="#2563eb" radius={[0, 4, 4, 0]}>
-                        {stats.valueByCategory.map((_, index) => (
+                        {(stats.countByCategory || []).map((_, index) => (
                           <Cell key={`cell-${index}`} fill={CATEGORY_COLORS[index % CATEGORY_COLORS.length]} />
                         ))}
                       </Bar>
@@ -2723,7 +3301,7 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
               <Card className="p-5 border-gray-200">
                 <div className="flex items-center justify-between mb-4">
                   <h4 className="font-bold text-gray-800 text-sm">Property Condition Status</h4>
-                  <span className="text-xs text-gray-400">{stats.totalAssets} Articles</span>
+                  <span className="text-xs text-gray-400">{stats.totalAssets} Articles ({stats.totalQuantity} Units)</span>
                 </div>
                 <div className="h-64 flex items-center justify-center">
                   <ResponsiveContainer width="100%" height="100%">
@@ -2756,21 +3334,21 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
               {/* Fund Source Distribution */}
               <Card className="p-5 border-gray-200 lg:col-span-2">
                 <div className="flex items-center justify-between mb-4">
-                  <h4 className="font-bold text-gray-800 text-sm">Asset Valuation by Source of Fund</h4>
+                  <h4 className="font-bold text-gray-800 text-sm">Equipment by Source of Fund (Units)</h4>
                   <span className="text-xs text-gray-400">DCP, MOOE, PTA, SEF</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {stats.valueByFundSource.map((fund, idx) => (
+                  {(stats.countByFundSource || []).map((fund, idx) => (
                     <div key={fund.name} className="p-4 bg-gray-50 rounded-md border border-gray-200">
                       <div className="flex items-center space-x-2 mb-1">
                         <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: CATEGORY_COLORS[idx % CATEGORY_COLORS.length] }}></span>
                         <span className="text-xs font-bold text-gray-800 truncate" title={fund.name}>{fund.name}</span>
                       </div>
                       <p className="text-lg font-black text-gray-900 mt-1">
-                        ₱ {fund.value.toLocaleString('en-PH', { maximumFractionDigits: 0 })}
+                        {fund.value} {fund.value === 1 ? 'unit' : 'units'}
                       </p>
                       <span className="text-[10px] text-gray-400">
-                        {stats.totalValuation > 0 ? ((fund.value / stats.totalValuation) * 100).toFixed(1) : 0}% of school assets
+                        {stats.totalQuantity > 0 ? ((fund.value / stats.totalQuantity) * 100).toFixed(1) : 0}% of school assets
                       </span>
                     </div>
                   ))}
@@ -3173,9 +3751,13 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
           ? (allPropertyLocationKeys[0] || 'General Storage / Unassigned')
           : selectedPrintCabinetLocation;
         const previewItems = propertyItemsByLocation.get(previewLocationName) || [];
+        const previewGroups = groupItemsByName(previewItems);
         const previewTotalQty = previewItems.reduce((acc, i) => acc + (Number(i.quantity) || 0), 0);
         const totalEquipmentArticles = (selectedPrintCabinetLocation === 'All' ? allPropertyLocationKeys : [selectedPrintCabinetLocation])
-          .reduce((acc, loc) => acc + (propertyItemsByLocation.get(loc)?.length || 0), 0);
+          .reduce((acc, loc) => {
+            const locItems = propertyItemsByLocation.get(loc) || [];
+            return acc + groupItemsByName(locItems).length;
+          }, 0);
         const totalEquipmentUnits = (selectedPrintCabinetLocation === 'All' ? allPropertyLocationKeys : [selectedPrintCabinetLocation])
           .reduce((acc, loc) => {
             const locItems = propertyItemsByLocation.get(loc) || [];
@@ -3306,22 +3888,39 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                   {/* Simulated Paper Sheet */}
                   <div className="bg-white border border-gray-300 shadow-md rounded-sm p-6 sm:p-8 max-w-2xl mx-auto text-xs text-gray-900 font-sans">
                     {/* Header */}
-                    <div className="text-center border-b-2 border-blue-900 pb-2 mb-3">
-                      <div className="text-[10px] text-gray-500 leading-tight">Republic of the Philippines</div>
-                      <div className="text-xs font-bold text-blue-900 leading-tight">DEPARTMENT OF EDUCATION</div>
-                      <div className="text-[10px] text-gray-500 leading-tight">Region VI - Western Visayas • Division of Iloilo • District of Leon</div>
-                      <div className="text-sm font-black text-red-800 tracking-wide my-0.5">LEON NATIONAL HIGH SCHOOL</div>
-                      <div className="text-[10px] font-bold text-blue-900">SCIENCE LABORATORY • PROPERTY & EQUIPMENT REGISTRY</div>
-                      <div className="text-xs font-extrabold uppercase text-gray-900 mt-1">PHYSICAL INVENTORY LIST PER CABINET / STORAGE LOCATION</div>
-                      <div className="inline-block bg-blue-50 text-blue-800 border border-blue-200 px-2.5 py-0.5 rounded text-[11px] font-bold uppercase mt-1">
-                        STORAGE LOCATION: {previewLocationName}
+                    <div className="border-b-2 border-blue-900 pb-2 mb-3">
+                      <div className="flex items-center justify-between gap-4 mb-2">
+                        {/* Left Logo: Lab-Logo.png */}
+                        <div className="flex items-center justify-start">
+                          <img
+                            src="/img/Lab-Logo.png"
+                            alt="Jang Yeong-Sil Science Laboratory Logo"
+                            className="h-11 sm:h-13 w-auto object-contain"
+                          />
+                        </div>
+
+                        {/* Right Logo: Tri-Logo.png */}
+                        <div className="flex items-center justify-end">
+                          <img
+                            src="/img/Tri-Logo.png"
+                            alt="Leon NHS Science Department Logo"
+                            className="h-10 sm:h-12 w-auto object-contain"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="text-center">
+                        <div className="text-xs font-extrabold uppercase text-gray-900 mt-1">PHYSICAL INVENTORY LIST PER CABINET / STORAGE LOCATION</div>
+                        <div className="inline-block bg-blue-50 text-blue-800 border border-blue-200 px-2.5 py-0.5 rounded text-[11px] font-bold uppercase mt-1">
+                          STORAGE LOCATION: {previewLocationName}
+                        </div>
                       </div>
                     </div>
 
                     {/* Metadata */}
                     <div className="flex justify-between items-center bg-gray-50 border border-gray-200 rounded px-2.5 py-1 text-[11px] mb-3 text-gray-600">
                       <div>Location: <strong className="text-gray-900">{previewLocationName}</strong></div>
-                      <div>Count: <strong className="text-gray-900">{previewItems.length} articles • {previewTotalQty} units</strong></div>
+                      <div>Count: <strong className="text-gray-900">{previewGroups.length} articles • {previewTotalQty} units</strong></div>
                       <div>Date: <strong className="text-gray-900">{new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</strong></div>
                     </div>
 
@@ -3329,13 +3928,13 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                     <div className="border border-gray-300 rounded overflow-hidden mb-3">
                       <div className="bg-blue-900 text-white px-2.5 py-1 text-[11px] font-bold flex justify-between items-center">
                         <span>LOCATION: {previewLocationName.toUpperCase()}</span>
-                        <span className="font-normal opacity-90 text-[10px]">{previewItems.length} items • {previewTotalQty} units</span>
+                        <span className="font-normal opacity-90 text-[10px]">{previewGroups.length} equipment types • {previewTotalQty} units</span>
                       </div>
                       <table className="w-full text-left text-[11px] border-collapse">
                         <thead className="bg-gray-100 text-gray-700 font-bold border-b border-gray-300">
                           <tr>
                             <th className="p-1.5 text-center w-8 border-r border-gray-200">#</th>
-                            <th className="p-1.5 border-r border-gray-200 w-28">Property / PIS Tag</th>
+                            <th className="p-1.5 border-r border-gray-200 w-32">Property / PIS Tag</th>
                             <th className="p-1.5 border-r border-gray-200">Equipment / Apparatus Description</th>
                             <th className="p-1.5 border-r border-gray-200 w-24">Category</th>
                             <th className="p-1.5 text-center w-14 border-r border-gray-200">Qty</th>
@@ -3343,40 +3942,62 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
-                          {previewItems.length === 0 ? (
+                          {previewGroups.length === 0 ? (
                             <tr>
                               <td colSpan={6} className="p-4 text-center text-gray-400 italic">
                                 No property equipment currently assigned to this location.
                               </td>
                             </tr>
                           ) : (
-                            previewItems.slice(0, 8).map((item, idx) => (
-                              <tr key={item.id} className="hover:bg-gray-50/50">
-                                <td className="p-1.5 text-center font-bold text-gray-500 border-r border-gray-200">{idx + 1}</td>
-                                <td className="p-1.5 border-r border-gray-200">
-                                  <div className="font-mono font-bold text-blue-900 text-[10px]">{item.propertyNumber}</div>
-                                  {item.pisCode && (
-                                    <span className="inline-block font-mono font-bold text-[9px] bg-yellow-100 text-yellow-900 px-1 rounded border border-yellow-300">
-                                      {item.pisCode}
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="p-1.5 border-r border-gray-200">
-                                  <div className="font-semibold text-gray-900 leading-tight">{item.name}</div>
-                                  {item.description && (
-                                    <div className="text-[10px] text-gray-500 line-clamp-1">{item.description}</div>
-                                  )}
-                                </td>
-                                <td className="p-1.5 text-gray-600 border-r border-gray-200 text-[10px]">{item.category}</td>
-                                <td className="p-1.5 text-center font-bold text-blue-900 border-r border-gray-200">{item.quantity} {item.unit}</td>
-                                <td className="p-1.5 text-center text-[10px] text-gray-700">{item.condition}</td>
-                              </tr>
-                            ))
+                            previewGroups.slice(0, 10).map((group, idx) => {
+                              const primary = group.items[0];
+                              const propNums = group.items.map(i => i.propertyNumber).filter(Boolean);
+                              let propDisplay = '';
+                              if (propNums.length <= 1) {
+                                propDisplay = propNums[0] || primary.propertyNumber;
+                              } else {
+                                const first = propNums[0];
+                                const last = propNums[propNums.length - 1];
+                                const lastSuffix = last.split('-').pop();
+                                propDisplay = `${first} to ${lastSuffix} (${propNums.length} units)`;
+                              }
+                              const pisCodes = group.items.map(i => i.pisCode).filter(Boolean) as string[];
+
+                              return (
+                                <tr key={group.key} className="hover:bg-gray-50/50">
+                                  <td className="p-1.5 text-center font-bold text-gray-500 border-r border-gray-200">{idx + 1}</td>
+                                  <td className="p-1.5 border-r border-gray-200">
+                                    <div className="font-mono font-bold text-blue-900 text-[10px] leading-tight">{propDisplay}</div>
+                                    {pisCodes.length === 1 && (
+                                      <span className="inline-block font-mono font-bold text-[9px] bg-yellow-100 text-yellow-900 px-1 rounded border border-yellow-300 mt-0.5">
+                                        {pisCodes[0]}
+                                      </span>
+                                    )}
+                                    {pisCodes.length > 1 && (
+                                      <span className="inline-block font-mono font-bold text-[9px] bg-blue-50 text-blue-800 px-1 rounded border border-blue-200 mt-0.5">
+                                        {pisCodes.length} PIS Tags
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="p-1.5 border-r border-gray-200">
+                                    <div className="font-semibold text-gray-900 leading-tight">{group.name}</div>
+                                    {primary.description && (
+                                      <div className="text-[10px] text-gray-500 line-clamp-1">{primary.description}</div>
+                                    )}
+                                  </td>
+                                  <td className="p-1.5 text-gray-600 border-r border-gray-200 text-[10px]">{primary.category}</td>
+                                  <td className="p-1.5 text-center font-bold text-blue-900 border-r border-gray-200 whitespace-nowrap">
+                                    {group.totalQty} {primary.unit || 'unit'}
+                                  </td>
+                                  <td className="p-1.5 text-center text-[10px] text-gray-700">{primary.condition}</td>
+                                </tr>
+                              );
+                            })
                           )}
-                          {previewItems.length > 8 && (
+                          {previewGroups.length > 10 && (
                             <tr className="bg-gray-50 text-gray-500 italic text-[10px]">
                               <td colSpan={6} className="p-1.5 text-center">
-                                ... and {previewItems.length - 8} more equipment items in this cabinet (all will be printed on full page)
+                                ... and {previewGroups.length - 10} more equipment articles in this cabinet (all will be printed on full page)
                               </td>
                             </tr>
                           )}
@@ -3385,26 +4006,10 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
                           <tr>
                             <td colSpan={4} className="p-1.5 text-right uppercase text-[10px]">Cabinet Subtotal:</td>
                             <td className="p-1.5 text-center text-blue-900 font-extrabold">{previewTotalQty}</td>
-                            <td className="p-1.5 text-center text-[10px] text-gray-500">{previewItems.length} items</td>
+                            <td className="p-1.5 text-center text-[10px] text-gray-500">{previewGroups.length} articles</td>
                           </tr>
                         </tfoot>
                       </table>
-                    </div>
-
-                    {/* Sign-off Preview */}
-                    <div className="grid grid-cols-2 gap-6 pt-3 border-t border-gray-200 text-[10px]">
-                      <div>
-                        <div className="font-bold text-gray-700 mb-6">Counted & Inspected by:</div>
-                        <div className="border-b border-gray-400 pb-0.5"></div>
-                        <div className="text-gray-500 mt-0.5">Science Teacher / Property Custodian</div>
-                        <div className="text-gray-400 mt-0.5">Date: ____________________</div>
-                      </div>
-                      <div>
-                        <div className="font-bold text-gray-700 mb-6">Verified by:</div>
-                        <div className="border-b border-gray-400 pb-0.5"></div>
-                        <div className="text-gray-500 mt-0.5">Science Coordinator / School Head</div>
-                        <div className="text-gray-400 mt-0.5">Date: ____________________</div>
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -3438,6 +4043,149 @@ export const PropertyManagement: React.FC<PropertyManagementProps> = ({ onRefres
           </div>
         );
       })()}
+
+      {/* Export Property by Name Modal */}
+      {isExportByNameModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 md:p-6 overflow-y-auto animate-in fade-in duration-150">
+          <div className="relative w-full max-w-xl max-h-[90vh] md:max-h-[92vh] bg-white rounded-lg shadow-2xl border border-gray-200 flex flex-col overflow-hidden my-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 bg-white flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 tracking-tight">
+                    Export Property by Name (.xlsx)
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Download an official Excel sheet containing all units of a specific equipment or article.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsExportByNameModalOpen(false)}
+                className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 bg-slate-50/60">
+              {/* Search input */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search property names (e.g. Microscope, Acer Laptop, Table)..."
+                  value={exportByNameSearchTerm}
+                  onChange={(e) => setExportByNameSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-8 py-2 text-xs md:text-sm border border-gray-300 rounded-md bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  autoFocus
+                />
+                {exportByNameSearchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setExportByNameSearchTerm('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
+                    title="Clear"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Status bar */}
+              <div className="text-[11px] font-semibold text-gray-500 flex items-center justify-between px-1">
+                <span>
+                  Showing {filteredExportProperties.length} of {distinctPropertySummaries.length} property names ({items.length} total units)
+                </span>
+                <span>Click Export to download .xlsx</span>
+              </div>
+
+              {/* Property list */}
+              <div className="border border-gray-200 rounded-md divide-y divide-gray-100 bg-white max-h-[50vh] overflow-y-auto shadow-2xs">
+                {filteredExportProperties.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-gray-500">
+                    No properties match &quot;{exportByNameSearchTerm}&quot;
+                  </div>
+                ) : (
+                  filteredExportProperties.map((prop) => (
+                    <div
+                      key={prop.name}
+                      className="p-3 flex items-center justify-between gap-3 hover:bg-slate-50 transition-colors"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-gray-900 text-xs md:text-sm truncate">
+                            {prop.name}
+                          </span>
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200 rounded">
+                            {prop.category}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-gray-500 mt-0.5">
+                          <span><strong>{prop.count}</strong> {prop.count === 1 ? 'unit' : 'units'} registered</span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await handleExportByName(prop.name);
+                        }}
+                        className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors flex-shrink-0 cursor-pointer"
+                        title={`Download Excel sheet for "${prop.name}"`}
+                      >
+                        <Download className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Export Excel</span>
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3 border-t border-gray-200 bg-white flex items-center justify-between gap-2 flex-shrink-0">
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsExportByNameModalOpen(false);
+                  await handleExportAll();
+                }}
+                className="px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-100 border border-gray-300 rounded transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Export All Properties ({items.length} units)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsExportByNameModalOpen(false)}
+                className="px-4 py-1.5 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <BulkInventoryModal
+        isOpen={isBulkModalOpen}
+        onClose={() => setIsBulkModalOpen(false)}
+        type="property"
+        propertyItems={items}
+        onSuccess={async () => {
+          const fresh = await propertyStorage.getPropertyItems();
+          setItems(fresh);
+          if (onRefreshParent) onRefreshParent();
+        }}
+      />
     </div>
   );
 };

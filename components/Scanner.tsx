@@ -231,7 +231,10 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
 
   const isSpecificUnit = foundItem && scannedUniqueId && scannedUniqueId !== foundItem.shortId && scannedUniqueId !== foundItem.id;
   const specificUnitRecord = isSpecificUnit 
-    ? relatedRecords.find(r => r.specificId === scannedUniqueId)
+    ? relatedRecords.find(r => 
+        r.specificId === scannedUniqueId ||
+        r.specificId?.split(',').map(s => s.trim().toUpperCase()).includes(scannedUniqueId.trim().toUpperCase())
+      )
     : undefined;
 
 
@@ -256,7 +259,10 @@ const Scanner: React.FC<ScannerProps> = ({ items, borrowRecords, onBorrow, onRet
 
       activeLoansForAuditItem.forEach(r => {
           if (r.specificId && r.specificId.trim()) {
-              specificBorrowedMap.set(r.specificId.trim().toUpperCase(), r);
+              const ids = r.specificId.split(',').map(s => s.trim().toUpperCase());
+              ids.forEach(id => {
+                  if (id) specificBorrowedMap.set(id, r);
+              });
           } else {
               unassignedBorrowedCount += (r.quantity || 1);
           }

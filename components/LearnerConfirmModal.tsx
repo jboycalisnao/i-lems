@@ -164,7 +164,7 @@ export const LearnerConfirmModal: React.FC<LearnerConfirmModalProps> = ({
 
   // Step 2: Confirmation Box Modal / View
   const confirmContent = (
-    <div className={`bg-white rounded-lg border border-gray-300 w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 text-left ${inline ? 'my-2 shadow-xs' : 'shadow-2xl my-8'}`}>
+    <div className={`bg-white rounded-lg border border-gray-300 w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 text-left ${inline ? 'my-2 shadow-xs' : 'shadow-2xl'}`}>
       {/* USIS Header with Typemark */}
       <div className="p-5 sm:p-6 bg-white border-b border-gray-200 text-center relative">
         <button

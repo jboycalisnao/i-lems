@@ -3,6 +3,19 @@ import { supabase } from '../supabaseClient';
 import { LNHS_ACTUAL_PROPERTY_ITEMS } from '../data/lnhsActualEquipment';
 import { rememberLocation } from './locationService';
 import { deleteDDownloadFile } from './ddownloadService';
+import {
+  getPropertyInventoryFromDB,
+  setPropertyInventoryInDB,
+  upsertPropertyItemInDB,
+  deletePropertyItemFromDB
+} from './indexedDbService';
+
+export {
+  getPropertyInventoryFromDB,
+  setPropertyInventoryInDB,
+  upsertPropertyItemInDB,
+  deletePropertyItemFromDB
+};
 
 const LOCAL_STORAGE_KEY = 'scilab_property_items';
 
@@ -285,48 +298,57 @@ let memoryCachedPropertyItems: PropertyItem[] | null = null;
 let lastPropertyFetchTimestamp = 0;
 const PROPERTY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache lifetime
 
-// Retrieve items from local storage cache (only real items, zero mock seeds)
-export const loadLocalProperties = (): PropertyItem[] => {
+// Purge legacy synchronous localStorage key to free memory and prevent quota or stale data issues
+if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
   try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (!raw) {
-      return [];
-    }
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    // Automatically purge any old mock seeds (id starts with 'prop-seed-')
-    const realItems = parsed.filter(item => item && !String(item.id || '').startsWith('prop-seed-'));
-    if (realItems.length !== parsed.length) {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(realItems));
-    }
-    return realItems.map(mapPropertyItem);
-  } catch (e) {
-    console.warn('Failed to parse property items from localStorage', e);
-    return [];
-  }
+    localStorage.removeItem(LOCAL_STORAGE_KEY);
+  } catch {}
+}
+
+// Deprecated: kept for backwards compatibility, returns in-memory items
+export const loadLocalProperties = (): PropertyItem[] => {
+  return memoryCachedPropertyItems || [];
 };
 
+const SESSION_STORAGE_KEY = 'scilab_property_session';
+
 export const saveLocalProperties = (items: PropertyItem[]) => {
-  try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(items));
-  } catch (e) {
-    console.error('Failed to write property items to localStorage', e);
+  // Update in-memory cache immediately for 0ms UI reactions
+  memoryCachedPropertyItems = items;
+  lastPropertyFetchTimestamp = Date.now();
+
+  // 1. Asynchronously persist all items into IndexedDB (zero main-thread freezing, no quota limits)
+  setPropertyInventoryInDB(items).catch(err => {
+    console.warn('Failed to persist property items in IndexedDB:', err);
+  });
+
+  // 2. Synchronous fast session cache for instant zero-flicker reload within the tab
+  if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
+    try {
+      const lightweight = items.map(({ attachments: _, ...rest }) => rest);
+      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(lightweight));
+    } catch {}
   }
 };
 
 /**
- * Synchronously get cached property items for instant component hydration (0ms delay)
+ * Synchronously get cached property items for instant (0ms delay) page reload hydration
  */
 export const getCachedPropertyItems = (): PropertyItem[] => {
   if (memoryCachedPropertyItems && memoryCachedPropertyItems.length > 0) {
     return memoryCachedPropertyItems;
   }
-  const local = loadLocalProperties();
-  if (local && local.length > 0) {
-    memoryCachedPropertyItems = local;
-    return local;
+  if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
+    try {
+      const raw = sessionStorage.getItem(SESSION_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          memoryCachedPropertyItems = parsed.map(mapPropertyItem);
+          return memoryCachedPropertyItems;
+        }
+      }
+    } catch {}
   }
   return [];
 };
@@ -337,32 +359,42 @@ export const getCachedPropertyItems = (): PropertyItem[] => {
 export const invalidatePropertyCache = (): void => {
   lastPropertyFetchTimestamp = 0;
   memoryCachedPropertyItems = null;
+  if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
+    try {
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    } catch {}
+  }
 };
 
 /**
  * Fetch all Property Items:
- * - Returns in-memory / local cache immediately if fresh (0ms delay)
- * - Only queries Supabase when cache is expired or forceRefresh is true
+ * - Checks in-memory cache (0ms delay)
+ * - Checks IndexedDB (fast, non-blocking asynchronous read, no UI freeze)
+ * - Checks Supabase cloud database if expired or forced
  */
 export const getPropertyItems = async (forceRefresh = false): Promise<PropertyItem[]> => {
   const now = Date.now();
 
-  // 1. Return in-memory cache if valid and not forcing a refresh
-  if (!forceRefresh && memoryCachedPropertyItems && memoryCachedPropertyItems.length > 0 && (now - lastPropertyFetchTimestamp < PROPERTY_CACHE_TTL)) {
+  // 1. Return in-memory cache if valid, not forcing a refresh, and was synced with authoritative data
+  if (!forceRefresh && memoryCachedPropertyItems && memoryCachedPropertyItems.length > 0 && lastPropertyFetchTimestamp > 0 && (now - lastPropertyFetchTimestamp < PROPERTY_CACHE_TTL)) {
     return memoryCachedPropertyItems;
   }
 
-  // 2. Return local storage cache if available and not forcing refresh
-  if (!forceRefresh && !memoryCachedPropertyItems) {
-    const local = loadLocalProperties();
-    if (local && local.length > 0) {
-      memoryCachedPropertyItems = local;
-      lastPropertyFetchTimestamp = now;
-      return local;
+  // 2. Return IndexedDB cache if available and not forcing refresh (instant non-blocking)
+  if (!forceRefresh) {
+    try {
+      const fromDB = await getPropertyInventoryFromDB();
+      if (fromDB && fromDB.length > 0) {
+        memoryCachedPropertyItems = fromDB;
+        lastPropertyFetchTimestamp = now;
+        return fromDB;
+      }
+    } catch (err) {
+      console.warn('IndexedDB property fetch notice:', err);
     }
   }
 
-  // 3. Query authoritative data from Supabase
+  // 3. Query authoritative data from Supabase (all records)
   if (supabase && typeof supabase.from === 'function') {
     try {
       const { data, error } = await supabase
@@ -374,6 +406,7 @@ export const getPropertyItems = async (forceRefresh = false): Promise<PropertyIt
         const mapped = data.map(mapPropertyItem);
         memoryCachedPropertyItems = mapped;
         lastPropertyFetchTimestamp = Date.now();
+        // Save all records directly into IndexedDB
         saveLocalProperties(mapped);
         return mapped;
       }
@@ -385,9 +418,13 @@ export const getPropertyItems = async (forceRefresh = false): Promise<PropertyIt
     }
   }
 
-  const local = loadLocalProperties();
-  memoryCachedPropertyItems = local;
-  return local;
+  // Final fallback to IndexedDB
+  const fromDB = await getPropertyInventoryFromDB();
+  if (fromDB.length > 0) {
+    memoryCachedPropertyItems = fromDB;
+    return fromDB;
+  }
+  return memoryCachedPropertyItems || [];
 };
 
 /**
@@ -421,8 +458,13 @@ export const savePropertyItem = async (item: PropertyItem): Promise<{ success: b
     serializedNotes = cleanNotes ? `${cleanNotes}\n${tag}` : tag;
   }
 
+  // Ensure UUID compliance for PostgreSQL/Supabase
+  const isValidUUID = (val?: string) => Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
+  const finalId = isValidUUID(item.id) ? item.id : crypto.randomUUID();
+  item.id = finalId;
+
   const dbPayload = {
-    id: item.id,
+    id: finalId,
     property_number: item.propertyNumber.trim(),
     pis_code: item.pisCode?.trim() || null,
     name: item.name.trim(),
@@ -484,7 +526,9 @@ export const savePropertyItem = async (item: PropertyItem): Promise<{ success: b
   }
 
   // 2. Update local cache with real item
-  const current = loadLocalProperties();
+  const current = memoryCachedPropertyItems && memoryCachedPropertyItems.length > 0 
+    ? memoryCachedPropertyItems 
+    : await getPropertyInventoryFromDB();
   const existingIndex = current.findIndex(p => p.id === item.id);
   let updatedList: PropertyItem[];
   if (existingIndex >= 0) {
@@ -494,6 +538,7 @@ export const savePropertyItem = async (item: PropertyItem): Promise<{ success: b
     updatedList = [item, ...current];
   }
   saveLocalProperties(updatedList);
+  upsertPropertyItemInDB(item).catch(console.warn);
   memoryCachedPropertyItems = updatedList;
   lastPropertyFetchTimestamp = Date.now();
   if (item.location) {
@@ -535,7 +580,9 @@ export const savePropertyItemsBulk = async (newItems: PropertyItem[]): Promise<{
  * Delete a Property Item from Cloud (Supabase)
  */
 export const deletePropertyItem = async (id: string): Promise<{ success: boolean; message?: string }> => {
-  const current = loadLocalProperties();
+  const current = memoryCachedPropertyItems && memoryCachedPropertyItems.length > 0 
+    ? memoryCachedPropertyItems 
+    : await getPropertyInventoryFromDB();
   const targetItem = current.find(p => p.id === id);
 
   // Clean up any uploaded DDownload files
@@ -570,6 +617,7 @@ export const deletePropertyItem = async (id: string): Promise<{ success: boolean
   }
 
   const filtered = current.filter(p => p.id !== id);
+  deletePropertyItemFromDB(id).catch(console.warn);
   saveLocalProperties(filtered);
   memoryCachedPropertyItems = filtered;
   lastPropertyFetchTimestamp = Date.now();
@@ -584,7 +632,9 @@ export const deletePropertyItemsBulk = async (ids: string[]): Promise<{ success:
   if (ids.length === 0) return { success: true };
 
   const idSet = new Set(ids);
-  const current = loadLocalProperties();
+  const current = memoryCachedPropertyItems && memoryCachedPropertyItems.length > 0 
+    ? memoryCachedPropertyItems 
+    : await getPropertyInventoryFromDB();
 
   // Clean up any uploaded DDownload files for all deleted items
   for (const item of current) {
@@ -643,12 +693,15 @@ export const calculatePropertyStats = (items: PropertyItem[]): PropertyStats => 
   const capitalOutlayCount = items.filter(i => i.inventoryType === 'Capital Outlay').length;
   const semiExpendableCount = items.filter(i => i.inventoryType === 'Semi-Expendable').length;
 
-  // By Category
+  // By Category (Valuation and Unit Counts)
   const catMap: Record<string, number> = {};
+  const catCountMap: Record<string, number> = {};
   items.forEach(i => {
     catMap[i.category] = (catMap[i.category] || 0) + (i.totalValue || i.quantity * i.unitValue);
+    catCountMap[i.category] = (catCountMap[i.category] || 0) + (i.quantity || 1);
   });
   const valueByCategory = Object.entries(catMap).map(([name, value]) => ({ name, value }));
+  const countByCategory = Object.entries(catCountMap).map(([name, value]) => ({ name, value }));
 
   // By Condition
   const condMap: Record<string, number> = {};
@@ -657,13 +710,16 @@ export const calculatePropertyStats = (items: PropertyItem[]): PropertyStats => 
   });
   const countByCondition = Object.entries(condMap).map(([name, value]) => ({ name, value }));
 
-  // By Fund Source
+  // By Fund Source (Valuation and Unit Counts)
   const fundMap: Record<string, number> = {};
+  const fundCountMap: Record<string, number> = {};
   items.forEach(i => {
     const fund = i.sourceOfFund || 'Other';
     fundMap[fund] = (fundMap[fund] || 0) + (i.totalValue || i.quantity * i.unitValue);
+    fundCountMap[fund] = (fundCountMap[fund] || 0) + (i.quantity || 1);
   });
   const valueByFundSource = Object.entries(fundMap).map(([name, value]) => ({ name, value }));
+  const countByFundSource = Object.entries(fundCountMap).map(([name, value]) => ({ name, value }));
 
   return {
     totalAssets,
@@ -677,7 +733,9 @@ export const calculatePropertyStats = (items: PropertyItem[]): PropertyStats => 
     semiExpendableCount,
     valueByCategory,
     countByCondition,
-    valueByFundSource
+    valueByFundSource,
+    countByCategory,
+    countByFundSource
   };
 };
 
@@ -685,18 +743,34 @@ export const calculatePropertyStats = (items: PropertyItem[]): PropertyStats => 
  * Category Code mapping for DepEd Property numbering
  */
 export const getCategoryCode = (category: string = ''): string => {
-  const cat = (category || '').toLowerCase();
-  if (cat.includes('science') || cat.includes('lab')) return 'SCI';
-  if (cat.includes('it &') || cat.includes('digital') || cat.includes('dcp') || cat.includes('computer')) return 'DCP';
-  if (cat.includes('furniture') || cat.includes('fixture')) return 'FURN';
-  if (cat.includes('audio') || cat.includes('visual') || cat.includes('avr') || cat.includes('electronic')) return 'AVR';
-  if (cat.includes('appliance') || cat.includes('hvac') || cat.includes('aircon')) return 'HVAC';
-  if (cat.includes('sport') || cat.includes('pe')) return 'SPORTS';
+  const cat = (category || '').toLowerCase().trim();
+  if (
+    cat.includes('science') ||
+    cat.includes('lab') ||
+    cat.includes('apparatus') ||
+    cat.includes('instrument') ||
+    cat.includes('voltmeter') ||
+    cat.includes('meter') ||
+    cat.includes('balance') ||
+    cat.includes('microscope') ||
+    cat.includes('physics') ||
+    cat.includes('chemistry') ||
+    cat.includes('biology') ||
+    cat.includes('specimen')
+  ) {
+    return 'SCI';
+  }
+  if (cat.includes('it &') || cat.includes('digital') || cat.includes('dcp') || cat.includes('computer') || cat.includes('laptop')) return 'DCP';
+  if (cat.includes('furniture') || cat.includes('fixture') || cat.includes('table') || cat.includes('chair') || cat.includes('cabinet')) return 'FURN';
+  if (cat.includes('audio') || cat.includes('visual') || cat.includes('avr') || cat.includes('electronic') || cat.includes('tv') || cat.includes('projector')) return 'AVR';
+  if (cat.includes('appliance') || cat.includes('hvac') || cat.includes('aircon') || cat.includes('refrigerator')) return 'HVAC';
+  // Use strict word boundary for PE/P.E. so it does NOT match "property", "special", "equipment", etc.
+  if (cat.includes('sport') || /\bpe\b|\bp\.e\b|physical\s*education/i.test(cat)) return 'SPORTS';
   if (cat.includes('tool') || cat.includes('maintenance') || cat.includes('facility')) return 'TOOL';
   if (cat.includes('safe') || cat.includes('security') || cat.includes('disaster')) return 'SAFE';
   if (cat.includes('office') || cat.includes('admin')) return 'ADMIN';
   if (cat.includes('book') || cat.includes('learning')) return 'LRM';
-  return 'PROP';
+  return 'SCI'; // Default to SCI (Science Laboratory) in I-LEMS
 };
 
 /**
@@ -727,7 +801,7 @@ export const getClassificationCode = (classification: PropertyInventoryType = 'S
  */
 export const getPropertyNumberPrefix = (
   classification: PropertyInventoryType = 'Semi-Expendable',
-  category: string = 'General Property'
+  category: string = 'Science Laboratory Equipment'
 ): string => {
   const classCode = getClassificationCode(classification);
   const catCode = getCategoryCode(category);
@@ -744,7 +818,7 @@ export const generateNextPropertyNumbers = (
   items: PropertyItem[] = [],
   count: number = 1,
   classification: PropertyInventoryType = 'Semi-Expendable',
-  category: string = 'General Property',
+  category: string = 'Science Laboratory Equipment',
   year: number = new Date().getFullYear()
 ): string[] => {
   const prefix = getPropertyNumberPrefix(classification, category);

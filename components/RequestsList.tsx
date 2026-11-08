@@ -28,6 +28,7 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
   const [selectedRequest, setSelectedRequest] = useState<BorrowRequest | null>(null);
   // Formal Documentation Modal State (Agreement/Permit)
   const [agreementRequest, setAgreementRequest] = useState<BorrowRequest | null>(null);
+  const [agreementInitialMode, setAgreementInitialMode] = useState<'blank' | 'populated'>('populated');
 
   // Modal State
   const [confirmModal, setConfirmModal] = useState<{
@@ -157,7 +158,25 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
 
   // Triggers the unified permit/agreement modal
   const handlePrintSlip = (req: BorrowRequest) => {
+      setAgreementInitialMode('populated');
       setAgreementRequest(req);
+  };
+
+  const handlePrintBlankA5 = () => {
+      const blankRequest: BorrowRequest = {
+          id: 'blank',
+          referenceCode: 'BLANK-FORM',
+          borrowerName: '',
+          borrowerId: '',
+          borrowerEmail: '',
+          instructorName: '',
+          requestDate: new Date().toISOString(),
+          returnDate: '',
+          status: 'Pending',
+          items: []
+      };
+      setAgreementInitialMode('blank');
+      setAgreementRequest(blankRequest);
   };
 
   const getStatusBadge = (status: RequestStatus | string) => {
@@ -174,19 +193,31 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
   return (
     <div className="bg-white rounded-md shadow-xl border border-gray-200 flex flex-col h-[calc(100vh-200px)]">
         {/* Toolbar */}
-        <div className="p-4 border-b border-gray-200 flex flex-col sm:flex-row gap-4 justify-between items-center bg-gray-50/50 rounded-t-xl">
-             <div className="relative w-full sm:w-96">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 w-4 h-4" />
-                <input
-                    type="text"
-                    placeholder="Search by name, ref, or equipment..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm shadow-sm"
-                />
+        <div className="p-4 border-b border-gray-200 flex flex-col md:flex-row gap-3 justify-between items-center bg-gray-50/50 rounded-t-xl">
+             <div className="flex flex-col sm:flex-row gap-2.5 w-full md:w-auto items-stretch sm:items-center flex-1">
+                <div className="relative w-full sm:w-80">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 w-4 h-4" />
+                    <input
+                        type="text"
+                        placeholder="Search by name, ref, or equipment..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm shadow-sm"
+                    />
+                </div>
+                
+                <button
+                    type="button"
+                    onClick={handlePrintBlankA5}
+                    className="inline-flex items-center justify-center gap-2 px-3.5 py-2 bg-white border border-gray-300 hover:bg-gray-50 hover:border-gray-400 text-gray-700 font-bold text-xs rounded-md shadow-xs transition-colors whitespace-nowrap"
+                    title="Print Blank General Loan Agreement Form (A5 Landscape)"
+                >
+                    <Printer className="w-4 h-4 text-indigo-600" />
+                    <span>Print Blank A5 Sheet</span>
+                </button>
             </div>
             
-            <div className="flex bg-gray-100 rounded-md p-1 border border-gray-200">
+            <div className="flex bg-gray-100 rounded-md p-1 border border-gray-200 w-full md:w-auto overflow-x-auto justify-center sm:justify-start">
                 {(['All', 'Pending', 'Approved', 'Released', 'Rejected'] as const).map(status => (
                     <button 
                         key={status}
@@ -205,7 +236,19 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
                 <div className="flex justify-center py-20"><Loader2 className="w-10 h-10 animate-spin text-blue-500"/></div>
             ) : filteredRequests.length > 0 ? (
                 filteredRequests.map(req => (
-                    <div key={req.id} className="bg-white border border-gray-200 rounded-md p-4 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                    <div 
+                        key={req.id} 
+                        onClick={() => setSelectedRequest(req)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setSelectedRequest(req);
+                            }
+                        }}
+                        className="bg-white border border-gray-200 rounded-md p-4 shadow-sm hover:shadow-md hover:border-indigo-300 hover:bg-slate-50/50 transition-all group relative overflow-hidden cursor-pointer"
+                    >
                         {processingId === req.id && (
                             <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center z-10">
                                 <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
@@ -225,7 +268,7 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
                                         <span className="flex items-center gap-1 font-medium"><Calendar className="w-3 h-3" /> {new Date(req.requestDate).toLocaleDateString()}</span>
                                         
                                         {req.reservationSlot && (
-                                            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-blue-50 text-blue-700 font-bold rounded-md border border-blue-100 ml-1">
+                                             <div className="flex items-center gap-1.5 px-2 py-0.5 bg-blue-50 text-blue-700 font-bold rounded-md border border-blue-100 ml-1">
                                                 <MapPin className="w-3 h-3" /> 
                                                 <span>Lab: {req.reservationDate ? new Date(req.reservationDate).toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) : ''} @ {req.reservationSlot}</span>
                                             </div>
@@ -236,18 +279,24 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
 
                             <div className="flex flex-col items-end gap-2 w-full md:w-auto">
                                 <div className="mb-1">{getStatusBadge(req.status)}</div>
-                                <div className="flex gap-2">
+                                <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
                                     <button 
-                                        onClick={() => setSelectedRequest(req)}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedRequest(req);
+                                        }}
                                         className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors border border-transparent"
                                         title="View Details"
                                     >
                                         <Eye className="w-4 h-4" />
                                     </button>
                                     <button 
-                                        onClick={() => handlePrintSlip(req)}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handlePrintSlip(req);
+                                        }}
                                         className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors border border-transparent"
-                                        title="Generate & Print Official Permit"
+                                        title="Print General Loan Agreement Form (A5 Landscape)"
                                     >
                                         <Printer className="w-4 h-4" />
                                     </button>
@@ -256,13 +305,19 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
                                     {req.status === 'Pending' && (
                                         <>
                                             <button 
-                                                onClick={() => handleApprove(req)}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleApprove(req);
+                                                }}
                                                 className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white rounded-md hover:bg-green-700 text-xs font-bold shadow-sm"
                                             >
                                                 <CheckCircle className="w-3 h-3" /> Approve
                                             </button>
                                             <button 
-                                                onClick={() => handleReject(req)}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleReject(req);
+                                                }}
                                                 className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-md hover:bg-red-700 text-xs font-bold shadow-sm"
                                             >
                                                 <XCircle className="w-3 h-3" /> Reject
@@ -272,7 +327,10 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
 
                                     {req.status === 'Approved' && (
                                         <button 
-                                            onClick={() => handleRelease(req)}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleRelease(req);
+                                            }}
                                             className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 text-xs font-bold shadow-sm"
                                         >
                                             <Hand className="w-3 h-3" /> Release Items
@@ -280,7 +338,10 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
                                     )}
 
                                     <button 
-                                        onClick={() => handleDeleteRequest(req.id)}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteRequest(req.id);
+                                        }}
                                         className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
                                         title="Delete Request"
                                     >
@@ -355,8 +416,8 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
                     </div>
 
                     <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-3 flex-shrink-0">
-                        <button onClick={() => handlePrintSlip(selectedRequest)} className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-md hover:bg-white text-gray-700 font-bold text-sm transition-all shadow-sm"><Printer className="w-4 h-4" /> Print Permit</button>
-                        <button onClick={() => setSelectedRequest(null)} className="px-8 py-2 bg-gray-800 text-white rounded-md font-bold text-sm shadow-md">Close</button>
+                        <button onClick={() => handlePrintSlip(selectedRequest)} className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-md hover:bg-white text-gray-700 font-bold text-sm transition-all shadow-sm"><Printer className="w-4 h-4" /> Print Loan Agreement (A5 Landscape)</button>
+                        <button onClick={() => setSelectedRequest(null)} className="px-6 py-2 border border-gray-300 rounded-md hover:bg-gray-100 text-gray-700 font-bold text-sm transition-all">Close</button>
                     </div>
                 </div>
             </div>,
@@ -371,6 +432,7 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
             appName={settings.appName} 
             logoUrl={settings.logoUrl}
             labInCharge={settings.labInCharge}
+            initialMode={agreementInitialMode}
           />
         )}
 
