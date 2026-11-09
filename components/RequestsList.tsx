@@ -209,11 +209,11 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
                 <button
                     type="button"
                     onClick={handlePrintBlankA5}
-                    className="inline-flex items-center justify-center gap-2 px-3.5 py-2 bg-white border border-gray-300 hover:bg-gray-50 hover:border-gray-400 text-gray-700 font-bold text-xs rounded-md shadow-xs transition-colors whitespace-nowrap"
-                    title="Print Blank General Loan Agreement Form (A5 Landscape)"
+                    className="inline-flex items-center justify-center gap-2 px-3.5 py-2 bg-white border border-gray-300 hover:bg-gray-50 hover:border-gray-400 text-gray-700 font-bold text-xs rounded-md shadow-xs transition-colors whitespace-nowrap cursor-pointer"
+                    title="Print Blank General Loan Agreement Form (Half A4 / Letter Bondpaper)"
                 >
                     <Printer className="w-4 h-4 text-indigo-600" />
-                    <span>Print Blank A5 Sheet</span>
+                    <span>Print Blank Loan Slip</span>
                 </button>
             </div>
             
@@ -296,7 +296,7 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
                                             handlePrintSlip(req);
                                         }}
                                         className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors border border-transparent"
-                                        title="Print General Loan Agreement Form (A5 Landscape)"
+                                        title="Print General Loan Agreement Form (Half A4 / Letter Slip)"
                                     >
                                         <Printer className="w-4 h-4" />
                                     </button>
@@ -416,7 +416,7 @@ const RequestsList: React.FC<RequestsListProps> = ({ onRefresh }) => {
                     </div>
 
                     <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-3 flex-shrink-0">
-                        <button onClick={() => handlePrintSlip(selectedRequest)} className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-md hover:bg-white text-gray-700 font-bold text-sm transition-all shadow-sm"><Printer className="w-4 h-4" /> Print Loan Agreement (A5 Landscape)</button>
+                        <button onClick={() => handlePrintSlip(selectedRequest)} className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-md hover:bg-white text-gray-700 font-bold text-sm transition-all shadow-sm cursor-pointer"><Printer className="w-4 h-4 text-indigo-600" /> Print Loan Agreement (Half Sheet / A4 / Letter)</button>
                         <button onClick={() => setSelectedRequest(null)} className="px-6 py-2 border border-gray-300 rounded-md hover:bg-gray-100 text-gray-700 font-bold text-sm transition-all">Close</button>
                     </div>
                 </div>
